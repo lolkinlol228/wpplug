@@ -393,6 +393,47 @@ body.tabel-ucheta-page, .tabel-app-root {
   color: var(--primary);
 }
 
+.ts-table td.rate-cell.rate-manual {
+  color: #9a6700;
+  background: #fff8e1 !important;
+}
+
+.rate-manual-badge {
+  display: inline-block;
+  font-size: 9px;
+  color: #9a6700;
+  cursor: pointer;
+  margin-left: 2px;
+  vertical-align: super;
+  opacity: 0.7;
+  user-select: none;
+}
+.rate-manual-badge:hover {
+  opacity: 1;
+  color: #cf222e;
+}
+
+/* Loading overlay */
+.ts-loading-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(250,251,252,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  pointer-events: all;
+}
+.ts-loading-overlay .spinner {
+  width: 24px; height: 24px;
+  border: 3px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.ts-table-wrap { position: relative; }
+
 .day-cell {
   cursor: pointer;
   transition: all 0.1s;
@@ -437,6 +478,18 @@ body.tabel-ucheta-page, .tabel-app-root {
   color: var(--text);
   background: var(--surface2);
 }
+
+/* ─── Export checkbox bar ─── */
+.export-check-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px; margin-bottom: 10px;
+  background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius);
+  font-size: 13px;
+}
+.export-check-bar .check-count { color: var(--text-secondary); font-size: 12px; }
+.emp-check-cell { text-align: center !important; width: 32px; min-width: 32px; padding: 4px !important; }
+.emp-check-cell input[type=checkbox] { accent-color: var(--primary); width: 14px; height: 14px; cursor: pointer; }
+.emp-check-header { text-align: center !important; width: 32px; min-width: 32px; }
 
 /* ─── Summary Tables ─── */
 .summary-grid {
@@ -1091,6 +1144,14 @@ let editingPosId = null;
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         Уведомления <span id="notifBadge" style="display:none;background:var(--danger);color:#fff;font-size:10px;padding:1px 5px;border-radius:9px;margin-left:2px"></span>
       </button>
+      <button class="nav-btn" id="nav-profile" onclick="showPage('profile')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+        Мой профиль
+      </button>
+      <button class="nav-btn" id="nav-admin-panel" onclick="showPage('admin-panel')" style="display:none">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+        Админ-панель
+      </button>
       <button class="nav-btn" id="nav-workflow" onclick="showPage('workflow')" style="display:none">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg>
         Цепочки
@@ -1098,13 +1159,13 @@ let editingPosId = null;
     </div>
 
     <!-- User bar at bottom -->
-    <div class="user-bar">
+    <div class="user-bar" onclick="showPage('profile')" style="cursor:pointer" title="Мой профиль">
       <div class="user-avatar" id="sidebarAvatar">?</div>
       <div style="flex:1; min-width:0;">
         <div class="user-name" id="sidebarUsername">...</div>
         <div class="user-role" id="sidebarRole">загрузка...</div>
       </div>
-      <button class="btn-logout" onclick="fetch(API_BASE + 'logout').then(() => window.location.reload())">Выйти</button>
+      <button class="btn-logout" onclick="event.stopPropagation();fetch(API_BASE + 'logout').then(() => window.location.reload())">Выйти</button>
     </div>
   </aside>
 
@@ -1112,7 +1173,13 @@ let editingPosId = null;
   <main class="main-content">
 
     <div class="page" id="page-employees">
-      <div class="page-title"><?php echo esc_html($T['employees']); ?></div>
+      <div class="page-title">
+        <?php echo esc_html($T['employees']); ?>
+        <label style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;cursor:pointer;color:var(--text-secondary)">
+          <input type="checkbox" id="showFiredCheck" onchange="toggleFiredEmployees()" style="accent-color:var(--danger);width:15px;height:15px">
+          🚫 Уволенные
+        </label>
+      </div>
 
       <div class="emp-form" id="empForm">
         <div class="form-group" style="position:relative;">
@@ -1153,6 +1220,10 @@ let editingPosId = null;
         <div class="form-group">
           <label id="rateLabel"><?php echo esc_html($T['rate']); ?></label>
           <input type="number" id="empRate" step="0.01" placeholder="0.00">
+        </div>
+        <div class="form-group">
+          <label>Заметка</label>
+          <input type="text" id="empNote" placeholder="Заметка (необязательно)" maxlength="500">
         </div>
         <div style="display:flex; gap:6px; align-items:end;">
           <button class="btn btn-primary" onclick="saveEmployee()"><?php echo esc_html($T['save']); ?></button>
@@ -1281,7 +1352,10 @@ let editingPosId = null;
 
     <!-- Стаж страница -->
     <div class="page" id="page-experience">
-      <div class="page-title">Стаж сотрудников</div>
+      <div class="page-title">
+        Стаж сотрудников
+        <button class="btn btn-success" style="margin-left:auto;font-size:13px" onclick="exportExperienceExcel()">📥 Экспорт в Excel</button>
+      </div>
       <div style="margin-bottom:12px">
         <input type="text" id="expSearch" placeholder="Поиск сотрудника..." oninput="filterExpEmployees(this.value)" style="width:100%;max-width:400px;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius)">
       </div>
@@ -1320,9 +1394,14 @@ let editingPosId = null;
     <div class="page" id="page-databases">
       <div class="page-title">
         🗄️ Базы данных
-        <button class="btn btn-primary" style="margin-left:auto;display:none" id="createDbBtn" onclick="openCreateDbModal()">
-          ＋ Создать БД
-        </button>
+        <div style="display:flex;gap:8px;margin-left:auto;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-ghost" style="font-size:13px" onclick="exportDbBackup()">📦 Экспорт ZIP</button>
+          <button class="btn btn-ghost" style="font-size:13px" onclick="document.getElementById('importBackupInput').click()">📥 Импорт ZIP</button>
+          <input type="file" id="importBackupInput" accept=".zip" style="display:none" onchange="importDbBackup(this)">
+          <button class="btn btn-primary" style="display:none" id="createDbBtn" onclick="openCreateDbModal()">
+            ＋ Создать БД
+          </button>
+        </div>
       </div>
       <div id="dbsGrid"></div>
     </div>
@@ -1388,7 +1467,136 @@ let editingPosId = null;
       <div id="workflowContent"></div>
     </div>
 
+    <!-- Profile page -->
+    <div class="page" id="page-profile">
+      <div class="page-title">👤 Мой профиль</div>
+      <div style="max-width:480px;display:flex;flex-direction:column;gap:16px;">
+
+        <!-- Avatar + info card -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:24px;display:flex;align-items:center;gap:20px;">
+          <div id="profileAvatar" style="width:64px;height:64px;border-radius:50%;background:var(--primary);color:#fff;font-size:28px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">?</div>
+          <div>
+            <div id="profileDisplayName" style="font-size:18px;font-weight:700;color:var(--text)">—</div>
+            <div id="profileUsername" style="font-size:13px;color:var(--text-secondary);margin-top:2px"></div>
+            <div id="profileRole" style="font-size:11px;color:var(--text-tertiary);margin-top:2px"></div>
+          </div>
+        </div>
+
+        <!-- Edit form -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;display:flex;flex-direction:column;gap:14px;">
+          <div style="font-weight:600;font-size:14px;margin-bottom:2px;">✏️ Изменить данные</div>
+
+          <div class="form-group">
+            <label>ФИО / Отображаемое имя</label>
+            <input type="text" id="profileDisplayNameInput" placeholder="Введите ваше ФИО" maxlength="255"
+              style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--surface);color:var(--text)">
+            <div style="font-size:11px;color:var(--text-tertiary);margin-top:3px">Будет отображаться другим пользователям вместо логина</div>
+          </div>
+
+          <div style="border-top:1px solid var(--border);padding-top:14px;">
+            <div style="font-weight:600;font-size:13px;margin-bottom:10px;">🔑 Сменить пароль <span style="font-weight:400;color:var(--text-tertiary)">(необязательно)</span></div>
+            <div class="form-group">
+              <label>Новый пароль</label>
+              <input type="password" id="profileNewPassword" placeholder="Оставьте пустым если не хотите менять"
+                style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--surface);color:var(--text)">
+            </div>
+            <div class="form-group">
+              <label>Повторите пароль</label>
+              <input type="password" id="profileNewPassword2" placeholder="Повторите новый пароль"
+                style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--surface);color:var(--text)">
+            </div>
+          </div>
+
+          <button class="btn btn-primary" onclick="saveProfile()" style="align-self:flex-start">Сохранить</button>
+        </div>
+
+      </div>
+    </div>
+
+
+    <!-- Admin panel page (superadmin only) -->
+    <div class="page" id="page-admin-panel">
+      <div class="page-title">🔒 Админ-панель</div>
+      <div style="max-width:600px;display:flex;flex-direction:column;gap:20px">
+        
+        <!-- Maintenance mode -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px">
+          <div style="font-weight:600;font-size:15px;margin-bottom:12px">🔧 Режим технических работ</div>
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" id="maintenanceToggle" onchange="toggleMaintenance()" style="width:18px;height:18px;accent-color:var(--danger)">
+              <span style="font-size:14px;font-weight:500" id="maintenanceLabel">Выключен</span>
+            </label>
+          </div>
+          <div class="form-group" style="margin-bottom:12px">
+            <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Сообщение для пользователей</label>
+            <input type="text" id="maintenanceMessage" placeholder="Система на обслуживании..." style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px">
+          </div>
+          <button class="btn btn-primary btn-small" onclick="saveMaintenance()">Сохранить</button>
+        </div>
+
+        <!-- System notification -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px">
+          <div style="font-weight:600;font-size:15px;margin-bottom:12px">📢 Уведомление от системы</div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Сообщение</label>
+            <textarea id="sysNotifMessage" rows="3" placeholder="Текст уведомления..." style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:inherit;resize:vertical"></textarea>
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Кому</label>
+            <select id="sysNotifTarget" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px">
+              <option value="all">Всем пользователям</option>
+            </select>
+          </div>
+          <button class="btn btn-primary btn-small" onclick="sendSystemNotification()">Отправить</button>
+        </div>
+
+      </div>
+    </div>
+
   </main>
+</div>
+
+<!-- Modal: restore employee -->
+<div class="modal-overlay hidden" id="restoreModal" onclick="if(event.target===this)closeRestoreModal()">
+  <div class="modal-box" style="max-width:420px">
+    <div class="modal-title">♻️ Восстановить сотрудника</div>
+    <p style="font-size:14px;color:var(--text-secondary);margin-bottom:16px">
+      Сотрудник: <strong id="restoreEmpName"></strong>
+    </p>
+    <div id="restoreFiredHint" style="display:none;font-size:12px;color:var(--danger);background:#ffebe9;border:1px solid #ffadb5;border-radius:var(--radius);padding:6px 10px;margin-bottom:14px"></div>
+    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:14px">
+      Выберите год и месяц, <strong>начиная с которого</strong> сотрудник снова отображается в табеле:
+    </p>
+    <div style="display:flex;gap:12px;margin-bottom:16px">
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label>Год</label>
+        <select id="restoreYear" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--surface);color:var(--text)"></select>
+      </div>
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label>Месяц</label>
+        <select id="restoreMonth" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--surface);color:var(--text)">
+          <option value="1">Январь</option>
+          <option value="2">Февраль</option>
+          <option value="3">Март</option>
+          <option value="4">Апрель</option>
+          <option value="5">Май</option>
+          <option value="6">Июнь</option>
+          <option value="7">Июль</option>
+          <option value="8">Август</option>
+          <option value="9">Сентябрь</option>
+          <option value="10">Октябрь</option>
+          <option value="11">Ноябрь</option>
+          <option value="12">Декабрь</option>
+        </select>
+      </div>
+    </div>
+    <div id="restoreError" style="display:none;font-size:13px;color:var(--danger);background:#ffebe9;border:1px solid #ffadb5;border-radius:var(--radius);padding:8px 12px;margin-bottom:12px"></div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeRestoreModal()">Отмена</button>
+      <button class="btn btn-success" id="restoreConfirmBtn" onclick="confirmRestoreEmployee()">✅ Восстановить</button>
+    </div>
+  </div>
 </div>
 
 <!-- Modal: create database -->
@@ -1523,8 +1731,14 @@ let mePerms = {};
 let meIsAdmin = false;
 let meUserId = null;
 
+function escHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 
 function showPage(page) {
+  if (currentPage === 'notifications' && page !== 'notifications') notifTabOpened = false;
   currentPage = page;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
@@ -1541,6 +1755,9 @@ function showPage(page) {
   if (page === 'history') loadHistory(1);
   if (page === 'notifications') loadNotifications();
   if (page === 'workflow') loadWorkflowPage();
+  if (page === 'profile') loadProfilePage();
+  if (page === 'admin-panel') loadAdminPanel();
+  // Stop chat polling when leaving chat
 }
 
 function setLang(lang) {
@@ -1595,34 +1812,124 @@ async function loadEmployees() {
     const res = await fetch(API_BASE + 'employees');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     employees = await res.json();
+    if (showFiredEmployees) await loadFiredEmployees();
     renderEmployees();
   } catch (error) {
     console.error('Failed to load employees:', error);
   }
 }
 
+let firedEmployeesList = [];
+let showFiredEmployees = false;
+async function loadFiredEmployees() { try { const r = await fetch(API_BASE + 'employees/fired'); if (r.ok) firedEmployeesList = await r.json(); } catch(e) { firedEmployeesList = []; } }
+async function toggleFiredEmployees() { showFiredEmployees = document.getElementById('showFiredCheck').checked; if (showFiredEmployees && !firedEmployeesList.length) await loadFiredEmployees(); renderEmployees(); }
+// ─── Restore Employee Modal ───
+let _restoreEmpId = null;
+let _restoreEmpName = '';
+
+function restoreFiredEmployee(empId) {
+  // Find employee info from list
+  const emp = firedEmployeesList.find(e => e.id === empId);
+  _restoreEmpId = empId;
+  _restoreEmpName = emp ? emp.full_name : '';
+
+  // Populate year select
+  const yearSel = document.getElementById('restoreYear');
+  const curYear = new Date().getFullYear();
+  yearSel.innerHTML = '';
+  for (let y = curYear + 1; y >= curYear - 5; y--) {
+    const opt = document.createElement('option');
+    opt.value = y;
+    opt.textContent = y;
+    if (y === selectedYear) opt.selected = true;
+    yearSel.appendChild(opt);
+  }
+
+  // Set month
+  document.getElementById('restoreMonth').value = selectedMonth;
+
+  // Show fired date hint
+  const hint = document.getElementById('restoreFiredHint');
+  if (emp) {
+    const mn = ['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+    hint.textContent = `Уволен: ${mn[emp.fired_month] || emp.fired_month} ${emp.fired_year}`;
+    hint.style.display = 'block';
+  } else {
+    hint.style.display = 'none';
+  }
+
+  document.getElementById('restoreEmpName').textContent = _restoreEmpName;
+  document.getElementById('restoreModal').classList.remove('hidden');
+}
+
+function closeRestoreModal() {
+  document.getElementById('restoreModal').classList.add('hidden');
+  _restoreEmpId = null;
+}
+
+async function confirmRestoreEmployee() {
+  if (!_restoreEmpId) return;
+  const year  = parseInt(document.getElementById('restoreYear').value);
+  const month = parseInt(document.getElementById('restoreMonth').value);
+  if (!year || !month || month < 1 || month > 12) {
+    document.getElementById('restoreError').textContent = 'Укажите корректный год и месяц';
+    document.getElementById('restoreError').style.display = 'block';
+    return;
+  }
+  document.getElementById('restoreError').style.display = 'none';
+  const btn = document.getElementById('restoreConfirmBtn');
+  btn.disabled = true; btn.textContent = 'Восстанавливаем...';
+
+  try {
+    const r = await fetch(API_BASE + 'employee/fire', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ employee_id: _restoreEmpId, year, month, fire: false })
+    });
+    const d = await r.json();
+    if (d.ok === false) throw new Error(d.error || 'Ошибка');
+    closeRestoreModal();
+    showToast('✅ Сотрудник восстановлен', 'success');
+    await loadFiredEmployees();
+    renderEmployees();
+    await loadTimesheet();
+  } catch(e) {
+    document.getElementById('restoreError').textContent = e.message || 'Ошибка соединения';
+    document.getElementById('restoreError').style.display = 'block';
+  } finally {
+    btn.disabled = false; btn.textContent = '✅ Восстановить';
+  }
+}
+
 function renderEmployees() {
   const grid = document.getElementById('empGrid');
-  if (!employees.length) {
+  if (!employees.length && !showFiredEmployees) {
     grid.innerHTML = `<div class="empty-state"><p>${T.no_employees}</p></div>`;
     return;
   }
-  grid.innerHTML = employees.map(e => {
+  let firedHtml = '';
+  if (firedEmployeesList.length > 0 && showFiredEmployees) {
+    const mn = ['','Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+    firedHtml = '<div style="margin-bottom:16px;padding:12px 16px;background:#fff8e1;border:1px solid #ffe082;border-radius:var(--radius)"><div style="font-weight:600;font-size:13px;color:#7a4700;margin-bottom:8px">🚫 Уволенные</div>' +
+      firedEmployeesList.map(e => `<div class="emp-card" style="border-color:#ffe082;background:#fffbe6"><div class="emp-info"><div class="emp-name" style="text-decoration:line-through;opacity:0.7">${escHtml(e.full_name)}</div><div class="emp-meta"><span class="emp-badge" style="background:#ffebe9;color:var(--danger);border-color:#ffadb5">Уволен: ${mn[e.fired_month]} ${e.fired_year}</span></div></div><div class="emp-actions"><button class="btn btn-success" style="font-size:12px" onclick="restoreFiredEmployee(${e.id})">♻️ Восстановить</button></div></div>`).join('') + '</div>';
+  }
+  grid.innerHTML = firedHtml + employees.map(e => {
     const posName = e.position_name || e.position || '';
     const empType = e.employment_internal || e.employment_external || '';
     const empTypeLabel = empType === 'staff' ? (T.staff || 'Штат') : 
                         empType === 'part_time' ? (T.part_time || 'Совм.') : '';
-    
+    const noteHtml = e.note ? `<div style="font-size:12px;color:var(--text-secondary);margin-top:4px;padding:4px 8px;background:var(--surface2);border-radius:4px;border-left:2px solid var(--primary)">📝 ${escHtml(e.note)}</div>` : '';
     return `
     <div class="emp-card">
       <div class="emp-info">
-        <div class="emp-name">${e.full_name}</div>
-        <div class="emp-pos">${posName}</div>
+        <div class="emp-name">${escHtml(e.full_name)}</div>
+        <div class="emp-pos">${escHtml(posName)}</div>
         <div class="emp-meta">
           ${empTypeLabel ? `<span class="emp-badge badge-rate">${empTypeLabel}</span>` : ''}
           <span class="emp-badge badge-rate">${T.rate || 'Ставка'}: ${e.rate || 0}</span>
-          ${e.pedagog_experience ? `<span class="emp-badge badge-fixed">${e.pedagog_experience}</span>` : ''}
+          ${e.pedagog_experience ? `<span class="emp-badge badge-fixed">${escHtml(e.pedagog_experience)}</span>` : ''}
         </div>
+        ${noteHtml}
       </div>
       <div class="emp-actions">
         <button class="btn btn-ghost" onclick="editEmployee(${e.id})"><?php echo esc_html($T['edit']); ?></button>
@@ -1655,6 +1962,7 @@ async function saveEmployee() {
     employment_external: empExternal,
     pedagog_experience: document.getElementById('empExperience').value.trim() || null,
     actual_hours: parseFloat(document.getElementById('empActualHours').value) || null,
+    note: document.getElementById('empNote') ? document.getElementById('empNote').value.trim() || null : null,
   };
   if (!data.full_name) return;
 
@@ -1709,6 +2017,7 @@ function editEmployee(id) {
   document.getElementById('empEmployment').value = empVal;
   document.getElementById('empExperience').value = e.pedagog_experience || '';
   document.getElementById('empActualHours').value = e.actual_hours || '';
+  if (document.getElementById('empNote')) document.getElementById('empNote').value = e.note || '';
   document.getElementById('cancelEditBtn').style.display = 'inline-flex';
   toggleRateLabel();
 }
@@ -1734,6 +2043,7 @@ function clearForm() {
   document.getElementById('empEmployment').value = '';
   document.getElementById('empExperience').value = '';
   document.getElementById('empActualHours').value = '';
+  if (document.getElementById('empNote')) document.getElementById('empNote').value = '';
   toggleRateLabel();
 }
 
@@ -1936,10 +2246,10 @@ function renderTimesheet(data) {
   window._statusMarkMap = data.status_to_mark || {};
   const { employees: rawEmps, days, day_names } = data;
   
-  // Sort: fixed/no-rate first, then alphabetical
+  // Sort: non-fixed first (A-Z), then fixed (A-Z)
   const emps = [...rawEmps].sort((a, b) => {
-    const aFixed = (a.employee.pay_type === 'fixed' || !a.employee.rate) ? 0 : 1;
-    const bFixed = (b.employee.pay_type === 'fixed' || !b.employee.rate) ? 0 : 1;
+    const aFixed = (a.employee.pay_type === 'fixed') ? 1 : 0;
+    const bFixed = (b.employee.pay_type === 'fixed') ? 1 : 0;
     if (aFixed !== bFixed) return aFixed - bFixed;
     return (a.employee.full_name || '').localeCompare(b.employee.full_name || '', 'ru');
   });
@@ -1955,6 +2265,7 @@ function renderTimesheet(data) {
   const isStaff = (data.db_type === 'staff');
   
   let html = '<div class="ts-table-wrap"><table class="ts-table"><thead><tr>';
+  html += `<th class="emp-check-header"><input type="checkbox" id="checkAllEmps" checked onchange="toggleAllEmpChecks(this.checked)" style="accent-color:var(--primary);width:14px;height:14px;cursor:pointer" title="Отметить / убрать всех"></th>`;
   html += `<th>${T.number}</th><th>${T.full_name}</th><th>${T.position}</th>`;
   html += `<th>${T.employment_conditions}</th>`;
   if (!isStaff) {
@@ -1989,6 +2300,7 @@ function renderTimesheet(data) {
     }
     
     html += '<tr>';
+    html += `<td class="emp-check-cell"><input type="checkbox" class="emp-export-check" data-emp-id="${e.id}" checked onchange="updateEmpCheckBar()"></td>`;
     // Fire/restore - only if can manage employees
     const canManageEmp = hasPerm('can_manage_employees');
     if (canManageEmp) {
@@ -1998,10 +2310,11 @@ function renderTimesheet(data) {
     }
     
     // FIO
+    const noteTooltip = e.note ? ` data-tooltip="${escHtml(e.note)}"` : '';
     if (hasPerm('can_edit_fio')) {
-      html += `<td class="name-cell-editable" contenteditable="true" data-employee-id="${e.id}" data-field="full_name" onblur="updateEmployeeName(this)">${e.full_name || ''}</td>`;
+      html += `<td class="name-cell-editable" contenteditable="true" data-employee-id="${e.id}" data-field="full_name" onblur="updateEmployeeName(this)"${noteTooltip}>${e.full_name || ''}</td>`;
     } else {
-      html += `<td>${e.full_name || ''}</td>`;
+      html += `<td${noteTooltip}>${e.full_name || ''}</td>`;
     }
     
     // Position
@@ -2039,9 +2352,13 @@ function renderTimesheet(data) {
     
     // Rate
     if (hasPerm('can_edit_rate')) {
-      html += `<td class="rate-cell" contenteditable="true" data-employee-id="${e.id}" data-field="rate" onblur="updateEmployeeField(this)" style="cursor:text" title="${T.rate_hint}">${e.rate || 0}</td>`;
+      const manualCls = e.rate_manual ? ' rate-manual' : '';
+      const manualTitle = e.rate_manual ? (T.rate_manual_hint || 'Ставка установлена вручную') : (T.rate_hint || '');
+      const resetBtn = e.rate_manual ? `<span class="rate-manual-badge" onmousedown="event.preventDefault();event.stopPropagation();resetRateManual(${e.id})" title="${T.rate_reset_confirm || 'Сбросить на авто'}">✎↺</span>` : '';
+      html += `<td class="rate-cell${manualCls}" style="position:relative;padding-right:${e.rate_manual ? '20px' : ''};cursor:text;" onclick="this.querySelector('span[contenteditable]')?.focus()"><span contenteditable="true" data-employee-id="${e.id}" data-field="rate" data-rate-manual="${e.rate_manual || 0}" onblur="updateEmployeeField(this)" style="cursor:text;outline:none;display:inline-block;min-width:100%;min-height:100%;" title="${manualTitle}">${e.rate || 0}</span>${resetBtn}</td>`;
     } else {
-      html += `<td class="rate-cell">${e.rate || 0}</td>`;
+      const resetBtn = e.rate_manual ? `<span class="rate-manual-badge" style="cursor:default">✎</span>` : '';
+      html += `<td class="rate-cell${e.rate_manual ? ' rate-manual' : ''}">${e.rate || 0}${resetBtn}</td>`;
     }
 
     for (const dc of emp.day_cells) {
@@ -2106,6 +2423,17 @@ function renderTimesheet(data) {
   }
 
   document.getElementById('tsContent').innerHTML = html;
+
+  // Панель "Отметить всех / Убрать всех" — вставляем перед таблицей
+  const _cb = document.createElement('div');
+  _cb.className = 'export-check-bar';
+  _cb.innerHTML =
+    `<button class="btn btn-ghost" style="font-size:12px;padding:5px 10px" onclick="toggleAllEmpChecks(true)">☑ Отметить всех</button>` +
+    `<button class="btn btn-ghost" style="font-size:12px;padding:5px 10px" onclick="toggleAllEmpChecks(false)">☐ Убрать всех</button>` +
+    `<span class="check-count" id="empCheckCount"></span>` +
+    `<span style="color:var(--text-tertiary);font-size:11px">— только отмеченные попадут в Excel</span>`;
+  var _tw = document.querySelector('#tsContent .ts-table-wrap');
+  if (_tw) _tw.parentNode.insertBefore(_cb, _tw);
   
   // Block all editing if workflow blocked
   if (blocked && !meIsAdmin) {
@@ -2133,8 +2461,9 @@ function renderTimesheet(data) {
   const expDiv = document.getElementById('exportByEmployee');
   expDiv.innerHTML = '<div style="border-top:1px solid var(--border); margin-top:4px; padding-top:4px; font-size:11px; color:var(--text-tertiary); padding-left:12px;">' + T.export_employee + '</div>';
   emps.forEach(emp => {
-    expDiv.innerHTML += `<a href="#" onclick="exportEmployee(${emp.employee.id}); return false;">${emp.employee.full_name}</a>`;
+    expDiv.innerHTML += `<a href="#" onclick="exportEmployee(${emp.employee.id}); return false;" class="exp-emp-link" data-emp-id="${emp.employee.id}">${emp.employee.full_name}</a>`;
   });
+  updateEmpCheckBar();
 }
 
 
@@ -2166,6 +2495,10 @@ async function setDayStatusForAll(status) {
     cell.textContent = getCellDisplay(status, empId, dayDropdownTarget);
     cell.className = 'day-cell status-' + status;
   });
+  
+  // Пересчитать рабочие дни для всех сотрудников в столбце
+  const affectedEmps = new Set([...document.querySelectorAll(`td.day-cell[data-day="${dayDropdownTarget}"]`)].map(c => Number(c.dataset.emp)));
+  affectedEmps.forEach(eid => recalcEmployeeSummary(eid));
   
   try {
     const res = await fetch(API_BASE + 'timesheet/bulk', {
@@ -2372,6 +2705,27 @@ function getCellDisplay(status, employeeId, day) {
 
 function round2(n) { return Math.round(n * 100) / 100; }
 
+// Update summary columns (working days, weekends) instantly from DOM
+function recalcEmployeeSummary(employeeId) {
+  const cells = document.querySelectorAll(`td.day-cell[data-emp="${employeeId}"]`);
+  let workDays = 0, weekends = 0;
+  cells.forEach(c => {
+    const cls = c.className || '';
+    // A cell counts as work if it has status-work OR has no status-day_off/holiday/sick etc
+    // We check explicitly what status it has
+    if (cls.includes('status-work')) workDays++;
+    else if (cls.includes('status-day_off')) weekends++;
+    // cells with custom_value have no status class — they are work days
+    else if (!cls.includes('status-')) workDays++;
+  });
+  const row = cells.length ? cells[0].closest('tr') : null;
+  if (row) {
+    const sc = row.querySelectorAll('.summary-cell');
+    if (sc[0]) sc[0].textContent = workDays;
+    if (sc[1]) sc[1].textContent = weekends;
+  }
+}
+
 async function setCellStatus(status) {
   // Bulk mode
   if (bulkTargets && bulkTargets.length > 0) { await setCellStatusBulk(status); return; }
@@ -2387,6 +2741,7 @@ async function setCellStatus(status) {
     cell.textContent = getCellDisplay(status, employeeId, day);
     cell.className = 'day-cell status-' + status;
   }
+  recalcEmployeeSummary(employeeId);
   
   try {
     const res = await fetch(API_BASE + 'timesheet/entry', {
@@ -2396,6 +2751,7 @@ async function setCellStatus(status) {
     if (!res.ok) throw new Error();
   } catch(e) {
     if (cell) { cell.textContent = prevText; cell.className = prevClass; }
+    recalcEmployeeSummary(employeeId); // пересчёт после отката
     showToast('❌ Ошибка сохранения', 'error');
   }
 }
@@ -2478,6 +2834,7 @@ async function updateMonthlyField(cell) {
       return;
     }
     data.rate = numValue;
+    data.rate_manual = 1; // User manually set rate via monthly settings
     data.position = null; 
   }
   
@@ -2546,17 +2903,19 @@ async function setEmployeePosition(positionName) {
   // Находим сотрудника чтобы получить actual_hours и pay_type
   let actualHours = null;
   let payType = null;
+  let rateManual = false;
   if (timesheetData && timesheetData.employees) {
     const empData = timesheetData.employees.find(e => e.employee.id == positionDropdownTarget.employeeId);
     if (empData) {
       actualHours = empData.employee.actual_hours;
       payType = empData.employee.pay_type;
+      rateManual = empData.employee.rate_manual;
     }
   }
   
-  // Рассчитываем новую ставку ТОЛЬКО если pay_type = 'rate' и есть оба значения
+  // Рассчитываем новую ставку ТОЛЬКО если pay_type = 'rate' И ставка НЕ установлена вручную
   let newRate = null;
-  if (payType === 'rate' && selectedPos && selectedPos.planned_hours && actualHours) {
+  if (!rateManual && payType === 'rate' && selectedPos && selectedPos.planned_hours && actualHours) {
     newRate = Math.round((actualHours / selectedPos.planned_hours) * 100) / 100;
   }
   
@@ -2582,34 +2941,32 @@ async function setEmployeePosition(positionName) {
 // Уволить или восстановить сотрудника
 async function toggleEmployeeStatus(employeeId, employeeName, isFired) {
   if (isWorkflowBlocked() && !meIsAdmin) { showToast('🔒 Табель заблокирован','warning'); return; }
-  // Находим имя сотрудника из данных табеля
-  let name = '';
-  if (timesheetData && timesheetData.employees) {
+
+  let name = employeeName || '';
+  if (!name && timesheetData && timesheetData.employees) {
     const empData = timesheetData.employees.find(e => e.employee.id == employeeId);
-    if (empData) {
-      name = empData.employee.full_name || '';
-    }
+    if (empData) name = empData.employee.full_name || '';
   }
-  
-  const action = isFired ? 'восстановить' : 'уволить';
-  const message = `Вы уверены, что хотите ${action} сотрудника "${name}"?`;
-  
-  if (!confirm(message)) return;
-  
+
+  if (isFired) {
+    // Восстановление — открываем модальное окно с выбором года и месяца
+    if (!firedEmployeesList.find(e => e.id === employeeId)) {
+      firedEmployeesList.push({ id: employeeId, full_name: name, fired_year: selectedYear, fired_month: selectedMonth });
+    }
+    restoreFiredEmployee(employeeId);
+    return;
+  }
+
+  // Увольнение — confirm + запрос
+  const mn = ['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  if (!confirm(`Уволить "${name}" начиная с ${mn[selectedMonth]} ${selectedYear}?`)) return;
+
   const scrollPos = saveScrollPosition();
-  
-  // Отправляем запрос на увольнение/восстановление
   await fetch(API_BASE + 'employee/fire', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      employee_id: employeeId,
-      year: selectedYear,
-      month: selectedMonth,
-      fire: !isFired  // Инвертируем статус
-    })
+    body: JSON.stringify({ employee_id: employeeId, year: selectedYear, month: selectedMonth, fire: true })
   });
-  
   await loadTimesheet();
   restoreScrollPosition(scrollPos);
 }
@@ -2669,6 +3026,7 @@ async function setEmploymentUnified(internalValue, externalValue) {
   if (!employmentDropdownTarget) return;
   
   const scrollPos = saveScrollPosition();
+  document.getElementById('employmentDropdown').classList.remove('show');
   
   const data = {
     employee_id: employmentDropdownTarget.employeeId,
@@ -2678,13 +3036,22 @@ async function setEmploymentUnified(internalValue, externalValue) {
     employment_external: externalValue
   };
   
+  // Optimistic: update local data and re-render just the cell
+  if (timesheetData && timesheetData.employees) {
+    const empData = timesheetData.employees.find(e => e.employee.id == employmentDropdownTarget.employeeId);
+    if (empData) {
+      empData.employee.employment_internal = internalValue;
+      empData.employee.employment_external = externalValue;
+    }
+  }
+  
+  // Fire request, reload after to sync totals
   await fetch(API_BASE + 'employee/update_employment', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(data)
   });
   
-  document.getElementById('employmentDropdown').classList.remove('show');
   await loadTimesheet();
   restoreScrollPosition(scrollPos);
 }
@@ -2714,11 +3081,10 @@ async function updateEmployeeField(cell) {
     }
     data.actual_hours = value === '' ? null : numValue;
     
-    // Пересчитываем ставку ТОЛЬКО если pay_type = 'rate' (не fixed!)
+    // Пересчитываем ставку ТОЛЬКО если pay_type = 'rate' И ставка НЕ установлена вручную
     if (timesheetData && timesheetData.employees) {
       const empData = timesheetData.employees.find(e => e.employee.id == employeeId);
-      // Проверяем что это сотрудник с оплатой по ставке, а не фиксированной суммой
-      if (empData && empData.employee.pay_type === 'rate' && empData.employee.position_id && numValue) {
+      if (empData && empData.employee.pay_type === 'rate' && !empData.employee.rate_manual && empData.employee.position_id && numValue) {
         const pos = positions.find(p => p.id == empData.employee.position_id);
         if (pos && pos.planned_hours) {
           data.rate = Math.round((numValue / pos.planned_hours) * 100) / 100;
@@ -2734,6 +3100,21 @@ async function updateEmployeeField(cell) {
       return;
     }
     data.rate = value === '' ? null : numValue;
+    // Direct edit → marks as manual on the server side
+    // Update day cells immediately in DOM so user sees change without waiting
+    if (numValue > 0) {
+      const empData = timesheetData && timesheetData.employees
+        ? timesheetData.employees.find(e => e.employee.id == employeeId) : null;
+      if (empData && empData.employee.pay_type === 'rate') {
+        const dailyValue = Math.round(numValue * 6 * 100) / 100;
+        const dayCells = document.querySelectorAll(`td.day-cell[data-emp="${employeeId}"]`);
+        dayCells.forEach(c => {
+          if (c.className.includes('status-work') || (!c.className.includes('status-'))) {
+            if (!c.dataset.customValue) c.textContent = dailyValue;
+          }
+        });
+      }
+    }
   } else if (field === 'pedagog_experience') {
     data.pedagog_experience = value || null;
   }
@@ -2743,6 +3124,53 @@ async function updateEmployeeField(cell) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(data)
   });
+  
+  await loadTimesheet();
+  restoreScrollPosition(scrollPos);
+}
+
+// Сбросить ручной режим ставки → пересчитать автоматически
+async function resetRateManual(employeeId) {
+  if (!timesheetData || !timesheetData.employees) return;
+  const empData = timesheetData.employees.find(e => e.employee.id == employeeId);
+  if (!empData || !empData.employee.rate_manual) return;
+  
+  const msg = (T.rate_reset_confirm || 'Сбросить ручную ставку и пересчитать автоматически?');
+  if (!confirm(msg)) return;
+  
+  const scrollPos = saveScrollPosition();
+  const e = empData.employee;
+  
+  // Пересчитываем ставку из факт.часов / план.часов
+  let newRate = null;
+  if (e.pay_type === 'rate' && e.position_id && e.actual_hours) {
+    const pos = positions.find(p => p.id == e.position_id);
+    if (pos && pos.planned_hours) {
+      newRate = Math.round((e.actual_hours / pos.planned_hours) * 100) / 100;
+    }
+  }
+  
+  try {
+    const res = await fetch(API_BASE + 'monthly_settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        employee_id: employeeId,
+        year: selectedYear,
+        month: selectedMonth,
+        rate: newRate,
+        rate_manual: 0
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast('❌ ' + (err.error || 'Ошибка сброса ставки'), 'error');
+      return;
+    }
+  } catch(e) {
+    showToast('❌ Ошибка сети', 'error');
+    return;
+  }
   
   await loadTimesheet();
   restoreScrollPosition(scrollPos);
@@ -2922,13 +3350,106 @@ document.addEventListener('click', e => {
 });
 
 function exportFull() {
-  window.open(EXPORT_BASE + `full/${selectedYear}/${selectedMonth}`, '_blank');
+  var ids = getCheckedEmpIds();
+  var q = '&emp_ids=' + (ids.length ? ids.join(',') : 'none');
+  window.open(EXPORT_BASE + 'full/' + selectedYear + '/' + selectedMonth + q, '_blank');
 }
 function exportBrief() {
-  window.open(EXPORT_BASE + `brief/${selectedYear}/${selectedMonth}`, '_blank');
+  var ids = getCheckedEmpIds();
+  var q = '&emp_ids=' + (ids.length ? ids.join(',') : 'none');
+  window.open(EXPORT_BASE + 'brief/' + selectedYear + '/' + selectedMonth + q, '_blank');
 }
 function exportEmployee(eid) {
-  window.open(EXPORT_BASE + `employee/${eid}/${selectedYear}/${selectedMonth}`, '_blank');
+  window.open(EXPORT_BASE + 'employee/' + eid + '/' + selectedYear + '/' + selectedMonth, '_blank');
+}
+
+// Экспорт стажа в Excel
+function exportExperienceExcel() {
+  if (!activeDbName) { alert('Выберите базу данных'); return; }
+  window.open(EXPORT_BASE + 'experience_excel', '_blank');
+}
+
+// Экспорт БД в ZIP
+function exportDbBackup() {
+  var db = activeDbName;
+  var url = EXPORT_BASE + 'backup_zip' + (db ? '&db=' + encodeURIComponent(db) : '');
+  // Суперадмин может выбрать — текущую БД или всё
+  if (meIsAdmin && db) {
+    if (!confirm('Экспортировать только базу «' + db + '»?\n\nОК — только эта БД\nОтмена — все данные')) {
+      url = EXPORT_BASE + 'backup_zip';
+    }
+  }
+  window.open(url, '_blank');
+}
+
+// Импорт БД из ZIP
+async function importDbBackup(input) {
+  if (!input.files || !input.files[0]) return;
+  var file = input.files[0];
+  input.value = '';
+
+  var mode = confirm('Режим импорта:\n\nОК — Merge (добавить к существующим данным)\nОтмена — Replace (заменить данные текущей БД)') ? 'merge' : 'replace';
+
+  if (mode === 'replace' && !confirm('⚠️ Все данные текущей базы «' + (activeDbName || 'все') + '» будут УДАЛЕНЫ и заменены. Продолжить?')) {
+    return;
+  }
+
+  var fd = new FormData();
+  fd.append('backup_zip', file);
+  fd.append('mode', mode);
+  if (activeDbName) fd.append('db_name', activeDbName);
+
+  var btn = document.querySelector('[onclick="document.getElementById(\'importBackupInput\').click()"]');
+  if (btn) { btn.textContent = '⏳ Импорт...'; btn.disabled = true; }
+
+  try {
+    var res = await fetch(API_BASE + 'import_backup', { method: 'POST', body: fd });
+    var data = await res.json();
+    if (data.ok) {
+      var summary = Object.entries(data.imported || {}).map(([t, n]) => t + ': ' + n + ' записей').join('\n');
+      alert('✅ Импорт завершён!\n\n' + summary);
+      window.location.reload();
+    } else {
+      alert('❌ Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+    }
+  } catch (e) {
+    alert('❌ Ошибка соединения');
+  } finally {
+    if (btn) { btn.textContent = '📥 Импорт ZIP'; btn.disabled = false; }
+  }
+}
+
+function getCheckedEmpIds() {
+  return Array.prototype.slice.call(document.querySelectorAll('.emp-export-check:checked')).map(function(cb){ return cb.dataset.empId; });
+}
+
+function toggleAllEmpChecks(state) {
+  document.querySelectorAll('.emp-export-check').forEach(function(cb){ cb.checked = state; });
+  var master = document.getElementById('checkAllEmps');
+  if (master) { master.checked = state; master.indeterminate = false; }
+  updateEmpCheckBar();
+}
+
+function updateEmpCheckBar() {
+  var all     = document.querySelectorAll('.emp-export-check');
+  var checked = document.querySelectorAll('.emp-export-check:checked');
+
+  // Счётчик
+  var countEl = document.getElementById('empCheckCount');
+  if (countEl) countEl.textContent = 'Отмечено: ' + checked.length + ' из ' + all.length;
+
+  // Мастер-чекбокс
+  var master = document.getElementById('checkAllEmps');
+  if (master) {
+    master.indeterminate = checked.length > 0 && checked.length < all.length;
+    master.checked = checked.length === all.length;
+  }
+
+  // Скрыть/показать ссылки экспорта по сотруднику
+  document.querySelectorAll('.exp-emp-link').forEach(function(link) {
+    var cb = document.querySelector('.emp-export-check[data-emp-id="' + link.dataset.empId + '"]');
+    link.style.display = (cb && cb.checked) ? '' : 'none';
+  });
 }
 
 
@@ -2953,6 +3474,10 @@ const PERM_LABELS = {
   can_edit_rate: '💰 Менять ставку в табеле',
   can_edit_days: '📅 Редактировать дни табеля',
   can_manage_experience: '🕐 Управление стажем',
+  can_access_during_maintenance: '🔧 Доступ во время тех. работ',
+  can_toggle_maintenance: '⚙️ Включать / выключать тех. работы',
+  can_send_notifications: '🔔 Отправка уведомлений',
+  can_manage_workflow: '🔗 Управление цепочкой согласования',
 };
 
 let accessibleDbs = [];
@@ -2976,8 +3501,10 @@ async function initMe() {
     
     // Update user bar
     const uname = me.username || '?';
-    document.getElementById('sidebarAvatar').textContent = uname[0].toUpperCase();
-    document.getElementById('sidebarUsername').textContent = uname;
+    const displayName = me.display_name && me.display_name.trim() ? me.display_name.trim() : uname;
+    const avatarLetter = displayName[0].toUpperCase();
+    document.getElementById('sidebarAvatar').textContent = avatarLetter;
+    document.getElementById('sidebarUsername').textContent = displayName;
     document.getElementById('sidebarRole').textContent = meIsAdmin ? '⭐ Суперадмин' : 'Пользователь';
     
     // Show privileged nav items
@@ -2988,16 +3515,21 @@ async function initMe() {
       document.getElementById('nav-history').style.display = '';
       document.getElementById('nav-workflow').style.display = '';
       document.getElementById('nav-experience').style.display = '';
+      document.getElementById('nav-admin-panel').style.display = '';
     } else {
       if (mePerms.can_manage_databases) document.getElementById('nav-databases').style.display = '';
       if (mePerms.can_view_stats) document.getElementById('nav-statistics').style.display = '';
       if (mePerms.can_view_history) document.getElementById('nav-history').style.display = '';
       if (mePerms.can_manage_employees) document.getElementById('nav-experience').style.display = '';
       if (mePerms.can_manage_experience) document.getElementById('nav-experience').style.display = '';
+      if (mePerms.can_manage_workflow) document.getElementById('nav-workflow').style.display = '';
+      if (mePerms.can_toggle_maintenance) document.getElementById('nav-admin-panel').style.display = '';
     }
     
     // Load notification count
     pollNotifications();
+    
+    // Poll chat unread count
     
     // Render DB switcher
     renderDbSwitcher();
@@ -3398,7 +3930,8 @@ function renderUsers(users) {
     return;
   }
   grid.innerHTML = users.map(u => {
-    const initial = (u.username || '?')[0].toUpperCase();
+    const displayName = u.display_name && u.display_name.trim() ? u.display_name.trim() : '';
+    const initial = (displayName || u.username || '?')[0].toUpperCase();
     const isActive = u.is_active !== 0;
     const isSA = u.is_superadmin;
     const permsCount = Object.keys(PERM_LABELS).filter(k => u[k]).length;
@@ -3407,7 +3940,8 @@ function renderUsers(users) {
     <div class="user-card">
       <div class="uc-avatar" style="${isSA ? 'background:linear-gradient(135deg,#e6a000,#7a4700)' : ''}">${initial}</div>
       <div class="uc-info">
-        <div class="uc-name">${u.username} 
+        <div class="uc-name">
+          ${displayName ? `<span style="font-weight:700">${displayName}</span> <span style="color:var(--text-tertiary);font-size:12px;font-weight:400">${u.username}</span>` : `<span>${u.username}</span>`}
           ${isSA ? '<span class="badge-admin">⭐ Суперадмин</span>' : '<span class="badge-user">Пользователь</span>'}
           ${!isActive ? '<span class="badge-inactive">Отключён</span>' : ''}
           ${isSelf ? '<span style="font-size:11px;color:var(--primary)">(вы)</span>' : ''}
@@ -3971,44 +4505,172 @@ function showPromptModal(title, text, onOk) {
 // NOTIFICATIONS
 // ═══════════════════════════════════════════
 let notifData = [];
+// IDs that were unread at the time of last poll (before user opened the tab)
+let notifUnreadIds = new Set();
+let notifTabOpened = false;
+
 async function pollNotifications() {
-  try {
-    const res = await fetch(API_BASE + 'notifications');
-    if (!res.ok) return;
-    const data = await res.json();
-    notifData = data.items || [];
-    const badge = document.getElementById('notifBadge');
-    if (data.unread > 0) {
-      badge.textContent = data.unread;
-      badge.style.display = 'inline';
-    } else {
-      badge.style.display = 'none';
-    }
-  } catch(e) {}
+  // Не делаем фоновый опрос, если вкладка открыта прямо сейчас
+  if (!notifTabOpened) {
+    try {
+      const res = await fetch(API_BASE + 'notifications');
+      if (res.ok) {
+        const data = await res.json();
+        notifData = data.items || [];
+        
+        // Собираем ID непрочитанных
+        notifUnreadIds = new Set(notifData.filter(n => !n.is_read).map(n => n.id));
+        
+        const badge = document.getElementById('notifBadge');
+        // Если бекэнд не прислал unread, считаем сами
+        const unreadCount = data.unread !== undefined ? data.unread : notifUnreadIds.size;
+        
+        if (unreadCount > 0) {
+          badge.textContent = '+' + unreadCount; // Добавили плюсик
+          badge.style.display = 'inline';
+        } else {
+          badge.style.display = 'none';
+        }
+      }
+    } catch(e) {}
+  }
   setTimeout(pollNotifications, 60000);
 }
 
 async function loadNotifications() {
-  // Auto-mark as read when opening
-  await markNotificationsRead();
-  await pollNotifications();
+  notifTabOpened = true;
   const c = document.getElementById('notificationsContent');
-  if (!notifData.length) { c.innerHTML = '<p style="color:var(--text-tertiary);padding:20px">Нет уведомлений</p>'; return; }
-  c.innerHTML = notifData.map(n => `
-    <div style="padding:10px 14px;border-bottom:1px solid var(--border);${n.is_read ? 'opacity:0.6' : 'background:#fffbe6'}">
-      <div style="font-size:13px">${n.message}</div>
-      <div style="font-size:11px;color:var(--text-tertiary);margin-top:4px">${n.created_at}</div>
-    </div>
-  `).join('');
+  c.innerHTML = '<p style="color:var(--text-tertiary);padding:20px">Загрузка...</p>';
+
+  try {
+    // 1. Делаем СВЕЖИЙ запрос при клике на вкладку
+    const res = await fetch(API_BASE + 'notifications');
+    if (res.ok) {
+      const data = await res.json();
+      notifData = data.items || [];
+      // Добавляем новые непрочитанные ID в наш Set перед рендером
+      notifData.forEach(n => {
+        if (!n.is_read) notifUnreadIds.add(n.id);
+      });
+    }
+  } catch(e) {
+    c.innerHTML = '<p style="color:var(--danger);padding:20px">Ошибка загрузки</p>';
+    return;
+  }
+
+  // 2. Рендерим данные с учетом непрочитанных
+  const renderNotifs = (items) => {
+    if (!items.length) { c.innerHTML = '<p style="color:var(--text-tertiary);padding:20px">Нет уведомлений</p>'; return; }
+    c.innerHTML = items.map(n => {
+      const isNew = notifUnreadIds.has(n.id);
+      return `<div style="padding:12px 16px;border-bottom:1px solid var(--border);${isNew ? 'background:#fffbe6;border-left:3px solid var(--primary)' : 'background:var(--surface);opacity:0.6'}">
+        <div style="font-size:13px;${isNew ? 'font-weight:500;color:var(--text)' : 'color:var(--text-secondary)'}">${n.message}</div>
+        <div style="font-size:11px;color:var(--text-tertiary);margin-top:4px">${n.created_at}</div>
+      </div>`;
+    }).join('');
+  };
+
+  renderNotifs(notifData);
+
+  // Скрываем бейдж сразу после рендера
+  const badge = document.getElementById('notifBadge');
+  badge.style.display = 'none';
+
+  // 3. Отправляем запрос на прочтение ТОЛЬКО если есть что читать
+  if (notifUnreadIds.size > 0) {
+    await markNotificationsRead();
+    // Очищаем локальные непрочитанные только после успешной отправки на сервер
+    notifUnreadIds = new Set();
+  }
 }
 
 async function markNotificationsRead() {
   await fetch(API_BASE + 'notifications/read', {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
 }
 
+
+// Функция для обновления счетчика уведомлений
+async function updateNotificationBadge() {
+  try {
+    // Предположим, у вас есть эндпоинт для получения количества непрочитанных
+    const res = await fetch(API_BASE + 'notifications/unread_count');
+    const data = await res.json();
+    
+    const badge = document.getElementById('notifBadge');
+    if (data.count > 0) {
+      badge.textContent = data.count > 99 ? '99+' : data.count;
+      badge.style.display = 'inline-block';
+    } else {
+      badge.style.display = 'none';
+    }
+  } catch (e) {
+    console.error('Ошибка при получении уведомлений:', e);
+  }
+}
+
+// Вызываем функцию при загрузке страницы
+document.addEventListener('DOMContentLoaded', () => {
+  updateNotificationBadge();
+  // Опционально: проверять каждые 5 минут
+  setInterval(updateNotificationBadge, 300000); 
+});
 // ═══════════════════════════════════════════
-// WORKFLOW CHAIN ADMIN PAGE
+// PROFILE
 // ═══════════════════════════════════════════
+async function loadProfilePage() {
+  const res = await fetch(API_BASE + 'profile');
+  if (!res.ok) return;
+  const data = await res.json();
+
+  const displayName = data.display_name && data.display_name.trim() ? data.display_name.trim() : data.username;
+  const initial = displayName[0].toUpperCase();
+
+  document.getElementById('profileAvatar').textContent = initial;
+  document.getElementById('profileDisplayName').textContent = displayName;
+  document.getElementById('profileUsername').textContent = '🔑 Логин: ' + data.username;
+  document.getElementById('profileRole').textContent = meIsAdmin ? '⭐ Суперадмин' : 'Пользователь';
+  document.getElementById('profileDisplayNameInput').value = data.display_name || '';
+  document.getElementById('profileNewPassword').value = '';
+  document.getElementById('profileNewPassword2').value = '';
+}
+
+async function saveProfile() {
+  const displayName = document.getElementById('profileDisplayNameInput').value.trim();
+  const pw1 = document.getElementById('profileNewPassword').value;
+  const pw2 = document.getElementById('profileNewPassword2').value;
+
+  if (pw1 || pw2) {
+    if (pw1 !== pw2) { showToast('Пароли не совпадают', 'error'); return; }
+    if (pw1.length < 4) { showToast('Пароль должен быть не менее 4 символов', 'error'); return; }
+  }
+
+  const body = { display_name: displayName };
+  if (pw1) body.password = pw1;
+
+  const res = await fetch(API_BASE + 'profile', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!data.ok) { showToast('❌ ' + (data.error || 'Ошибка'), 'error'); return; }
+
+  showToast('✅ Профиль сохранён', 'success');
+
+  // Update sidebar immediately
+  const newDisplay = data.display_name && data.display_name.trim() ? data.display_name.trim() :
+    (document.getElementById('sidebarUsername').textContent);
+  document.getElementById('sidebarAvatar').textContent = newDisplay[0].toUpperCase();
+  document.getElementById('sidebarUsername').textContent = newDisplay;
+
+  // Reload profile card
+  await loadProfilePage();
+
+  if (pw1) {
+    showToast('🔑 Пароль изменён. Следующий вход потребует новый пароль.', 'warning');
+    document.getElementById('profileNewPassword').value = '';
+    document.getElementById('profileNewPassword2').value = '';
+  }
+}
 let wfChains = [];
 let wfUsers = [];
 let wfStatusCache = {};
@@ -4165,18 +4827,40 @@ function isWorkflowBlocked() {
 }
 
 function canSubmitWorkflow() {
-  if (!wfCurrentStatus || !wfCurrentStatus.chains || !wfCurrentStatus.chains.length) return false;
-  if (wfCurrentStatus.status === 'completed') return false;
-  const uid = Number(meUserId);
-  const currentStep = wfCurrentStatus.current_step;
-  if (!wfCurrentStatus.activated) {
-    const first = wfCurrentStatus.chains[0];
-    return first && first.user_ids.map(Number).includes(uid);
-  }
-  const chain = wfCurrentStatus.chains[currentStep];
-  return chain && chain.user_ids.map(Number).includes(uid);
-}
+    if (!wfCurrentStatus || !wfCurrentStatus.chains || !wfCurrentStatus.chains.length) return false;
+    if (wfCurrentStatus.status === 'completed') return false;
+    const uid = Number(meUserId);
+    const currentStep = wfCurrentStatus.current_step;
+    const log = wfCurrentStatus.log || [];
 
+    // Находим момент последнего возврата (return) на текущий шаг.
+    // Submit-записи ДО этого возврата считаются устаревшими —
+    // пользователь должен снова отправить табель после доработки.
+    const lastReturnToThisStep = log
+        .filter(l => l.action === 'return' && Number(l.target_step) === currentStep)
+        .slice(-1)[0]; // последняя запись return на этот шаг
+
+    // Проверяем, отправлял ли уже этот пользователь на текущем шаге
+    // (только записи ПОСЛЕ последнего возврата, если он был)
+    const alreadySubmitted = log.some(l => {
+        if (l.action !== 'submit') return false;
+        if (l.step_order !== currentStep) return false;
+        if (Number(l.user_id) !== uid) return false;
+        // Если был возврат — проверяем, что submit позже него
+        if (lastReturnToThisStep) {
+            return new Date(l.created_at) > new Date(lastReturnToThisStep.created_at);
+        }
+        return true;
+    });
+    if (alreadySubmitted) return false;
+
+    if (!wfCurrentStatus.activated) {
+        const first = wfCurrentStatus.chains[0];
+        return first && first.user_ids.map(Number).includes(uid);
+    }
+    const chain = wfCurrentStatus.chains[currentStep];
+    return chain && chain.user_ids.map(Number).includes(uid);
+}
 function canReturnWorkflow() {
   if (!wfCurrentStatus || !wfCurrentStatus.chains) return false;
   if (wfCurrentStatus.status === 'completed') return false;
@@ -4188,27 +4872,43 @@ function canReturnWorkflow() {
 }
 
 async function workflowSubmit() {
-  const monthNames = ['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
-  const mn = monthNames[selectedMonth] || '';
-  showConfirm(
-    '📤 Отправить табель дальше?',
-    `Вы уверены что хотите отправить табель за ${mn} ${selectedYear}?\nПосле отправки редактирование будет заблокировано для вас.\n\nСиз ${mn} ${selectedYear} үчүн табелди жөнөткүңүз келеби?\nЖөнөткөндөн кийин сиз үчүн оңдоо бөгөттөлөт.\n\nAre you sure you want to send the timesheet for ${mn} ${selectedYear}?\nAfter sending, editing will be locked for you.`,
-    async () => {
-      const lastReturn = (wfCurrentStatus.log||[]).slice().reverse().find(l => l.action === 'return' && l.target_step === wfCurrentStatus.current_step);
-      const body = {year: selectedYear, month: selectedMonth};
-      if (lastReturn) body.return_to_step = lastReturn.step_order;
-      const res = await fetch(API_BASE + 'workflow/submit', {
-        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
-      });
-      if (res.ok) {
-        showToast('✅ Табель отправлен!', 'success');
-        loadTimesheet();
-      } else {
-        const err = await res.json();
-        showToast('❌ ' + (err.error || 'Ошибка'), 'error');
-      }
-    }
-  );
+    const monthNames = ['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+    const mn = monthNames[selectedMonth] || '';
+    showConfirm(
+        '📤 Отправить табель дальше?',
+        `Вы уверены что хотите отправить табель за ${mn} ${selectedYear}?\nПосле отправки редактирование будет заблокировано для вас.`,
+        async () => {
+            const lastReturn = (wfCurrentStatus.log||[]).slice().reverse().find(l => l.action === 'return' && l.target_step === wfCurrentStatus.current_step);
+            const body = {year: selectedYear, month: selectedMonth};
+            if (lastReturn) body.return_to_step = lastReturn.step_order;
+
+            // Блокируем кнопку сразу
+            const btn = document.querySelector('.wf-submit-btn');
+            if(btn) { btn.disabled = true; btn.textContent = '⏳ Отправка...'; }
+
+            try {
+                const res = await fetch(API_BASE + 'workflow/submit', {
+                    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    if (data.waiting && data.waiting_users) {
+                        showToast(`✅ Ваша отправка принята. Ожидаем подтверждения от: ${data.waiting_users.join(', ')}`, 'info', 7000);
+                    } else {
+                        showToast('✅ Табель успешно передан дальше!', 'success');
+                    }
+                    // Перезагружаем табель, чтобы обновить статус и скрыть кнопку у всех
+                    loadTimesheet();
+                } else {
+                    showToast('❌ ' + (data.error || 'Ошибка'), 'error');
+                    if(btn) { btn.disabled = false; btn.textContent = '📤 Отправить дальше'; }
+                }
+            } catch(e) {
+                showToast('❌ Ошибка сети', 'error');
+                if(btn) { btn.disabled = false; btn.textContent = '📤 Отправить дальше'; }
+            }
+        }
+    );
 }
 
 async function workflowReturn(targetStep) {
@@ -4462,6 +5162,10 @@ async function setCellStatusBulk(status) {
     if (cell) { cell.textContent = getCellDisplay(status, t.emp, t.day); cell.className = 'day-cell status-' + status; }
   });
   
+  // Пересчитать рабочие дни для всех затронутых сотрудников
+  const affectedEmpsBulk = new Set(bulkTargets.map(t => t.emp));
+  affectedEmpsBulk.forEach(eid => recalcEmployeeSummary(eid));
+  
   const cells = [...bulkTargets];
   clearDragSelection();
   bulkTargets = [];
@@ -4477,6 +5181,74 @@ async function setCellStatusBulk(status) {
   } catch(e) {
     showToast('❌ Ошибка сохранения', 'error');
     loadTimesheet();
+  }
+}
+// ═══════════════════════════════════════════
+// ADMIN PANEL
+// ═══════════════════════════════════════════
+
+async function loadAdminPanel() {
+  if (!meIsAdmin) return;
+  
+  // Load maintenance status
+  try {
+    const res = await fetch(API_BASE + 'maintenance');
+    const data = await res.json();
+    document.getElementById('maintenanceToggle').checked = data.enabled;
+    document.getElementById('maintenanceLabel').textContent = data.enabled ? '🔴 Включён' : 'Выключен';
+    document.getElementById('maintenanceMessage').value = data.message || '';
+  } catch(e) {}
+  
+  // Populate target selector with databases
+  const sel = document.getElementById('sysNotifTarget');
+  sel.innerHTML = '<option value="all">Всем пользователям</option>';
+  if (accessibleDbs && accessibleDbs.length) {
+    accessibleDbs.forEach(db => {
+      sel.innerHTML += `<option value="${escHtml(db.name)}">${escHtml(db.display_name)}</option>`;
+    });
+  }
+}
+
+function toggleMaintenance() {
+  const on = document.getElementById('maintenanceToggle').checked;
+  document.getElementById('maintenanceLabel').textContent = on ? '🔴 Включён' : 'Выключен';
+}
+
+async function saveMaintenance() {
+  const enabled = document.getElementById('maintenanceToggle').checked;
+  const message = document.getElementById('maintenanceMessage').value.trim();
+  
+  try {
+    await fetch(API_BASE + 'maintenance', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({enabled, message})
+    });
+    showToast(enabled ? '🔧 Техработы включены' : '✅ Техработы выключены', 'success');
+  } catch(e) {
+    showToast('Ошибка', 'error');
+  }
+}
+
+async function sendSystemNotification() {
+  const message = document.getElementById('sysNotifMessage').value.trim();
+  const target = document.getElementById('sysNotifTarget').value;
+  
+  if (!message) { showToast('Введите сообщение', 'warning'); return; }
+  
+  try {
+    const res = await fetch(API_BASE + 'system_notification', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({message, target})
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast(`📢 Отправлено ${data.sent_to} пользователям`, 'success');
+      document.getElementById('sysNotifMessage').value = '';
+    } else {
+      showToast(data.error || 'Ошибка', 'error');
+    }
+  } catch(e) {
+    showToast('Ошибка отправки', 'error');
   }
 }
 

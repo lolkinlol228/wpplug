@@ -97,6 +97,21 @@ function tabel_api_login() {
         $_SESSION['tabel_perms'] = tabel_user_perms($user['id']);
         
         tabel_log_login($username, (int)$user['id'], true);
+        
+        if (get_option('tabel_maintenance_mode', '0') === '1' && !$user['is_superadmin']) {
+            // Check if user has explicit permission to access during maintenance
+            $perms = tabel_user_perms((int)$user['id']);
+            $can_access = !empty($perms['can_access_during_maintenance']);
+            
+            if (!$can_access) {
+                unset($_SESSION['tabel_user_id'], $_SESSION['tabel_username'], $_SESSION['tabel_is_superadmin'], $_SESSION['tabel_perms']);
+                $msg = get_option('tabel_maintenance_message', 'Система на техническом обслуживании.');
+                http_response_code(503);
+                echo json_encode(['ok' => false, 'error' => '🔧 ' . $msg, 'maintenance' => true]);
+                return;
+            }
+        }
+        
         echo json_encode(['ok' => true, 'is_superadmin' => (bool)$user['is_superadmin']]);
     } else {
         tabel_log_login($username, $user ? (int)$user['id'] : null, false, $password);

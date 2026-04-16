@@ -3,7 +3,7 @@
  * Plugin Name: Табель учёта рабочего времени
  * Plugin URI: https://example.com
  * Description: Система учёта рабочего времени с табелями, сотрудниками, экспортом Excel и Telegram-уведомлениями. Шорткод: [tabel_ucheta]
- * Version: 1.0.1
+ * Version: 2.0.0.0
  * Author: Rustamov Ismail
  * Text Domain: tabel-ucheta
  * License: GPL v2
@@ -17,20 +17,28 @@ define('TABEL_URL', plugin_dir_url(__FILE__));
 
 // ─── Session: start early and reliably ───
 function tabel_ensure_session() {
-    if (session_status() === PHP_SESSION_NONE && !headers_sent()) {
-        // Set cookie params to match WordPress site
-        $secure = is_ssl();
-        $path = parse_url(home_url(), PHP_URL_PATH) ?: '/';
-        session_set_cookie_params([
-            'lifetime' => 86400,
-            'path' => $path,
-            'domain' => '',
-            'secure' => $secure,
-            'httponly' => true,
-            'samesite' => 'Lax',
-        ]);
-        @session_start();
-    }
+    if (session_status() === PHP_SESSION_ACTIVE) return; // уже активна
+    if (headers_sent()) return; // заголовки уже отправлены — не можем стартовать сессию
+    
+    $secure = is_ssl();
+    $path = parse_url(home_url(), PHP_URL_PATH) ?: '/';
+    
+    // На локалке иногда parse_url возвращает null — используем /
+    if (!$path || $path === '') $path = '/';
+    
+    session_set_cookie_params([
+        'lifetime' => 86400,
+        'path'     => $path,
+        'domain'   => '', // пустая строка = текущий домен (работает и на localhost)
+        'secure'   => $secure,
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+    
+    // Уникальное имя сессии чтобы не конфликтовать с другими плагинами
+    session_name('tabel_sess');
+    
+    @session_start();
 }
 add_action('init', 'tabel_ensure_session', 1);
 
@@ -52,12 +60,12 @@ function tabel_activate() {
 add_action('init', 'tabel_auto_migrate', 0);
 function tabel_auto_migrate() {
     $ver = get_option('tabel_db_version', '0');
-    if (version_compare($ver, '10', '<')) {
+    if (version_compare($ver, '14', '<')) {
         if (!function_exists('dbDelta')) {
             require_once ABSPATH . 'wp-admin/includes/upgrade.php';
         }
         tabel_create_tables();
-        update_option('tabel_db_version', '10');
+        update_option('tabel_db_version', '14');
     }
 }
 
@@ -77,6 +85,15 @@ function tabel_shortcode_render($atts) {
     if (!isset($_SESSION['tabel_user_id'])) {
         return tabel_render_login();
     }
+    
+    // Check maintenance for non-superadmins
+    if (get_option('tabel_maintenance_mode', '0') === '1' && empty($_SESSION['tabel_is_superadmin'])) {
+        $perms = isset($_SESSION['tabel_perms']) ? $_SESSION['tabel_perms'] : tabel_user_perms();
+        if (empty($perms['can_access_during_maintenance'])) {
+            return tabel_render_maintenance();
+        }
+    }
+    
     return tabel_render_app();
 }
 
@@ -158,6 +175,34 @@ function tabel_handle_routes() {
         exit;
     }
     
+    // Maintenance mode: block non-superadmin API
+    if (get_option('tabel_maintenance_mode', '0') === '1' && empty($_SESSION['tabel_is_superadmin'])) {
+        $perms = isset($_SESSION['tabel_perms']) ? $_SESSION['tabel_perms'] : [];
+        $can_access = !empty($perms['can_access_during_maintenance']);
+        
+        if (!$can_access) {
+            $allowed = ['me', 'logout', 'maintenance'];
+            $is_allowed = in_array($route, $allowed) || strpos($route, 'set_lang/') === 0;
+            if (!$is_allowed) {
+                header('Content-Type: application/json; charset=utf-8');
+                http_response_code(503);
+                $msg = get_option('tabel_maintenance_message', 'Система на техническом обслуживании. Попробуйте позже.');
+                echo json_encode(['error' => 'maintenance', 'message' => $msg]);
+                exit;
+            }
+        }
+    }
+    
+    // Close session early for read-only routes (prevents file lock blocking parallel requests)
+    $write_routes = ['login', 'logout', 'switch_db', 'set_lang', 'me', 'users', 'profile'];
+    $needs_write = false;
+    foreach ($write_routes as $wr) {
+        if (strpos($route, $wr) === 0) { $needs_write = true; break; }
+    }
+    if (!$needs_write) {
+        session_write_close();
+    }
+    
     // Route dispatcher
     tabel_dispatch_api($route);
     exit;
@@ -178,6 +223,38 @@ function tabel_handle_exports() {
     $route = sanitize_text_field($_GET['tabel_export']);
     tabel_dispatch_export($route);
     exit;
+}
+
+// ─── Render maintenance page ───
+function tabel_render_maintenance() {
+    $msg = get_option('tabel_maintenance_message', 'Система на техническом обслуживании. Попробуйте позже.');
+    $api_base = home_url('/?tabel_api=');
+    ob_start();
+    ?>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <div style="font-family:'Inter',sans-serif;display:flex;align-items:center;justify-content:center;min-height:60vh;padding:24px">
+      <div style="text-align:center;max-width:500px">
+        <div style="font-size:64px;margin-bottom:16px">🔧</div>
+        <h1 style="font-size:22px;font-weight:700;margin-bottom:8px;color:#24292f">Технические работы</h1>
+        <p style="font-size:14px;color:#57606a;line-height:1.6"><?php echo esc_html($msg); ?></p>
+        <p style="font-size:12px;color:#8c959f;margin-top:16px">Пожалуйста, попробуйте позже</p>
+        <button
+          onclick="tabelMaintenanceLogout()"
+          style="margin-top:24px;padding:9px 20px;background:#f6f8fa;border:1px solid #d0d7de;border-radius:6px;font-size:13px;font-weight:500;color:#24292f;cursor:pointer;font-family:inherit;"
+          onmouseover="this.style.background='#f3f4f6'" onmouseout="this.style.background='#f6f8fa'"
+        >← Выйти из аккаунта</button>
+      </div>
+    </div>
+    <script>
+    async function tabelMaintenanceLogout() {
+      try {
+        await fetch(<?php echo json_encode($api_base . 'logout'); ?>, { method: 'GET' });
+      } catch(e) {}
+      window.location.reload();
+    }
+    </script>
+    <?php
+    return ob_get_clean();
 }
 
 // ─── Render login ───

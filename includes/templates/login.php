@@ -78,10 +78,15 @@ window.tabelDoLogin = async function() {
   btn.textContent='Входим...'; btn.disabled=true; err.classList.remove('show');
   try {
     var res = await fetch(TABEL_API + 'login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:username,password:password})});
-    var data = await res.json();
+    var data;
+    try { data = await res.json(); } catch(je) {
+      var errText = res.status === 503 ? '🔧 Система на техническом обслуживании. Попробуйте позже.' : 'Ошибка сервера (' + res.status + ')';
+      document.getElementById('tabelErrText').textContent = errText;
+      err.classList.add('show'); btn.textContent='Войти'; btn.disabled=false; return;
+    }
     if(data.ok) { window.location.reload(); }
     else { document.getElementById('tabelErrText').textContent=data.error||'Неверный логин или пароль'; err.classList.add('show'); btn.textContent='Войти'; btn.disabled=false; }
-  } catch(e) { document.getElementById('tabelErrText').textContent='Ошибка соединения'; err.classList.add('show'); btn.textContent='Войти'; btn.disabled=false; }
+  } catch(e) { document.getElementById('tabelErrText').textContent='Ошибка соединения. Проверьте интернет.'; err.classList.add('show'); btn.textContent='Войти'; btn.disabled=false; }
 };
 })();
 </script>

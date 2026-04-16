@@ -19,6 +19,8 @@ function tabel_dispatch_export($route) {
     if (preg_match('/^full\/(\d+)\/(\d+)$/', $route, $m)) { tabel_export_generic('full', (int)$m[1], (int)$m[2]); return; }
     if (preg_match('/^brief\/(\d+)\/(\d+)$/', $route, $m)) { tabel_export_generic('brief', (int)$m[1], (int)$m[2]); return; }
     if (preg_match('/^employee\/(\d+)\/(\d+)\/(\d+)$/', $route, $m)) { tabel_export_generic('employee', (int)$m[2], (int)$m[3], (int)$m[1]); return; }
+    if ($route === 'backup_zip') { tabel_export_backup_zip(); return; }
+    if ($route === 'experience_excel') { tabel_export_experience_excel(); return; }
     if (preg_match('/^stats\/(\d+)\/(\d+)$/', $route, $m)) { tabel_export_generic('stats', (int)$m[1], (int)$m[2]); return; }
     http_response_code(404); echo 'Not found';
 }
@@ -159,8 +161,10 @@ class TabelXlsx {
         $x .= '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
             . ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">';
 
-        /* 1. sheetPr — pageSetUpPr fitToPage="1" ОБЯЗАТЕЛЕН, иначе fitToWidth/Height игнорируются */
-        $x .= '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>';
+        /* 1. sheetPr */
+        if ($sh['fitToPage']) {
+            $x .= '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>';
+        }
 
         /* 2. dimension */
         $x .= '<dimension ref="' . $dim . '"/>';
@@ -217,10 +221,10 @@ class TabelXlsx {
             $x .= '</mergeCells>';
         }
 
-        /* 8. pageMargins — минимальные но валидные поля */
-        $x .= '<pageMargins left="0.25" right="0.25" top="0.25" bottom="0.25" header="0.1" footer="0.1"/>';
+        /* 8. pageMargins */
+        $x .= '<pageMargins left="0.15" right="0.15" top="1.18" bottom="0.2" header="0" footer="0"/>';
 
-        /* 9. pageSetup — уместить на 1 страницу A4, альбомная. БЕЗ scale — конфликтует с fitTo* */
+        /* 9. pageSetup */
         $x .= '<pageSetup paperSize="9" orientation="' . $orient . '" fitToWidth="1" fitToHeight="1"/>';
 
         $x .= '</worksheet>';
@@ -321,7 +325,7 @@ class TabelXlsx {
          * 17  SM_NUM:     font4, border1, numFmt 164 (same as TD_NUM)
          * 18  GRAY:       font4, fill9(gray), border1, center
          */
-        $x .= '<cellXfs count="29">';
+        $x .= '<cellXfs count="30">';
         $a_cw = ' horizontal="center" vertical="center" wrapText="1"';
         $a_c  = ' horizontal="center" vertical="center"';
         $a_l  = ' horizontal="left" vertical="center" wrapText="1"';
@@ -359,6 +363,7 @@ class TabelXlsx {
         $x .= '<xf numFmtId="0" fontId="4" fillId="16" borderId="1" xfId="0"' . $fn . $f . $b . $aa . '><alignment' . $a_c . '/></xf>'; // 26 absence red
         $x .= '<xf numFmtId="0" fontId="4" fillId="17" borderId="1" xfId="0"' . $fn . $f . $b . $aa . '><alignment' . $a_c . '/></xf>'; // 27 late amber
         $x .= '<xf numFmtId="0" fontId="4" fillId="18" borderId="1" xfId="0"' . $fn . $f . $b . $aa . '><alignment' . $a_c . '/></xf>'; // 28 early_leave dk red
+        $x .= '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"' . $aa . '><alignment horizontal="left" vertical="center"/></xf>'; // 29 normal left no border
         $x .= '</cellXfs>';
 
         $x .= '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>';
@@ -522,39 +527,39 @@ function tabel_build_full($x, $emps, $days, $dnames, $yr, $mo, $S, $T, $MK, $db,
     $cs = $left_cols;
     $rs = $left_cols + $center_cols;
 
-    // Row 0: header_left1 (bold center) | header_center1 (bold center) | header_right1 (bold center)
+    // Row 0: header_left1 (bold left) | header_center1 (bold center) | header_right1 (bold left)
     $r = $fill($tc);
-    $r[0] = $x->c($g('header_left1','Макулдашылды'), 14); $r[$cs] = $x->c($g('header_center1',''), 14); $r[$rs] = $x->c($g('header_right1','БЕКИТЕМ'), 14);
+    $r[0] = $x->c($g('header_left1','Макулдашылды'), 13); $r[$cs] = $x->c($g('header_center1',''), 14); $r[$rs] = $x->c($g('header_right1','БЕКИТЕМ'), 13);
     $x->mergeNext(0,$left_cols); $x->mergeNext($cs,$center_cols); $x->mergeNext($rs,$right_cols);
     $x->addRow($r);
 
-    // Row 1: header_left2 (normal center) | header_center2 (bold center) | header_right2 (normal center)
+    // Row 1
     $r = $fill($tc);
-    $r[0] = $x->c($g('header_left2',''), 19); $r[$cs] = $x->c($g('header_center2',''), 14); $r[$rs] = $x->c($g('header_right2',''), 19);
+    $r[0] = $x->c($g('header_left2',''), 29); $r[$cs] = $x->c($g('header_center2',''), 14); $r[$rs] = $x->c($g('header_right2',''), 29);
     $x->mergeNext(0,$left_cols); $x->mergeNext($cs,$center_cols); $x->mergeNext($rs,$right_cols);
     $x->addRow($r);
 
-    // Row 2: header_left3 (normal center) | header_center3 (bold center) | header_right3 (normal center)
+    // Row 2
     $r = $fill($tc);
-    $r[0] = $x->c($g('header_left3',''), 19); $r[$cs] = $x->c($g('header_center3',''), 14); $r[$rs] = $x->c($g('header_right3',''), 19);
+    $r[0] = $x->c($g('header_left3',''), 29); $r[$cs] = $x->c($g('header_center3',''), 14); $r[$rs] = $x->c($g('header_right3',''), 29);
     $x->mergeNext(0,$left_cols); $x->mergeNext($cs,$center_cols); $x->mergeNext($rs,$right_cols);
     $x->addRow($r);
 
-    // Row 3: dates left (center) | document title center | dates right (center)
+    // Row 3: dates (left) | document title (center) | dates (left)
     $r = $fill($tc);
-    $r[0] = $x->c('"_____" __________ '.$yr.'-ж.', 19);
+    $r[0] = $x->c('"_____" __________ '.$yr.'-ж.', 29);
     $r[$cs] = $x->c(isset($S['doc_title']) ? $S['doc_title'] : 'Профессордук-окутуучулук курамдын жумуш убактысын эсепке алуу', 14);
-    $r[$rs] = $x->c('"_____" __________ '.$yr.'-ж.', 19);
+    $r[$rs] = $x->c('"_____" __________ '.$yr.'-ж.', 29);
     $x->mergeNext(0,$left_cols); $x->mergeNext($cs,$center_cols); $x->mergeNext($rs,$right_cols);
     $x->addRow($r);
 
-    // Row 4: ТАБЕЛИ
-    $r = $fill($tc); $r[0] = $x->c('ТАБЕЛИ', 12);
-    $x->mergeNext(0, $tc); $x->addRow($r);
+    // Row 4: ТАБЕЛИ (center block only)
+    $r = $fill($tc); $r[$cs] = $x->c('ТАБЕЛИ', 12);
+    $x->mergeNext($cs, $center_cols); $x->addRow($r);
 
-    // Row 5: month-year
-    $r = $fill($tc); $r[0] = $x->c($yr.'-жылдын '.$kg[$mo-1].' айы', 14);
-    $x->mergeNext(0, $tc); $x->addRow($r);
+    // Row 5: month-year (center block only)
+    $r = $fill($tc); $r[$cs] = $x->c($yr.'-жылдын '.$kg[$mo-1].' айы', 14);
+    $x->mergeNext($cs, $center_cols); $x->addRow($r);
 
     // Row 6: blank
     $x->addRow($fill($tc));
@@ -587,7 +592,7 @@ function tabel_build_full($x, $emps, $days, $dnames, $yr, $mo, $S, $T, $MK, $db,
     // Signatures
     $x->addRow($fill($tc));
     foreach (['sig1','sig2','sig3'] as $sk) {
-        $r = $fill($tc); $r[0] = $x->c($g($sk), 14);
+        $r = $fill($tc); $r[0] = $x->c($g($sk), 13);
         $x->mergeNext(0, $tc); $x->addRow($r);
         $x->addRow($fill($tc));
     }
@@ -694,4 +699,43 @@ function tabel_send_telegram_notification($fname, $type, $yr, $mo, $ename = null
     $msg = "🔔 Экспорт: {$mn[$mo-1]} {$yr}\n📊 " . $type;
     if ($ename) $msg .= "\n👤 {$ename}";
     @wp_remote_post("https://api.telegram.org/bot{$tk}/sendMessage", ['body'=>['chat_id'=>$ch,'text'=>$msg,'parse_mode'=>'HTML'],'timeout'=>10]);
+}
+function tabel_export_backup_zip() {
+    global $wpdb;
+    $user = tabel_current_user();
+    if (!$user || empty($user['is_superadmin'])) { http_response_code(403); echo 'Forbidden'; return; }
+    $db_filter = isset($_GET['db']) ? sanitize_text_field($_GET['db']) : null;
+    $tables = ['employees','positions','timesheet_entries','monthly_settings','excel_settings','experience'];
+    $tmp = tempnam(sys_get_temp_dir(), 'tabel_backup_');
+    $zip = new ZipArchive();
+    if ($zip->open($tmp, ZipArchive::CREATE|ZipArchive::OVERWRITE) !== true) { http_response_code(500); return; }
+    foreach ($tables as $tname) { $t = tabel_table($tname); $rows = ($db_filter && $tname!=='experience') ? $wpdb->get_results($wpdb->prepare("SELECT * FROM $t WHERE db_name=%s",$db_filter),ARRAY_A) : $wpdb->get_results("SELECT * FROM $t",ARRAY_A); $zip->addFromString($tname.'.json',json_encode($rows?:[],JSON_UNESCAPED_UNICODE)); }
+    $db_t = tabel_table('databases'); $dbs = $db_filter ? $wpdb->get_results($wpdb->prepare("SELECT * FROM $db_t WHERE name=%s",$db_filter),ARRAY_A) : $wpdb->get_results("SELECT * FROM $db_t",ARRAY_A);
+    $zip->addFromString('databases.json',json_encode($dbs?:[],JSON_UNESCAPED_UNICODE)); $zip->close();
+    $fname='tabel_backup_'.($db_filter?:'all').'_'.date('Y-m-d_His').'.zip';
+    header('Content-Type:application/zip'); header('Content-Disposition:attachment;filename="'.$fname.'"'); header('Content-Length:'.filesize($tmp)); readfile($tmp); @unlink($tmp); exit;
+}
+function tabel_import_backup_zip() {
+    global $wpdb; $user=tabel_current_user();
+    if(!$user||empty($user['is_superadmin'])){header('Content-Type:application/json');echo json_encode(['ok'=>false,'error'=>'Forbidden']);exit;}
+    header('Content-Type:application/json;charset=utf-8');
+    if(!isset($_FILES['backup_zip'])||$_FILES['backup_zip']['error']!==UPLOAD_ERR_OK){echo json_encode(['ok'=>false,'error'=>'Файл не загружен']);exit;}
+    $mode=isset($_POST['mode'])?$_POST['mode']:'merge'; $db_name=isset($_POST['db_name'])?$_POST['db_name']:null;
+    $zip=new ZipArchive(); if($zip->open($_FILES['backup_zip']['tmp_name'])!==true){echo json_encode(['ok'=>false,'error'=>'Невозможно открыть ZIP']);exit;}
+    $imported=[];
+    foreach(['databases','employees','positions','timesheet_entries','monthly_settings','excel_settings','experience'] as $tname){
+        $json=$zip->getFromName($tname.'.json'); if($json===false)continue; $rows=json_decode($json,true); if(!is_array($rows)||empty($rows))continue;
+        $t=tabel_table($tname); if($mode==='replace'&&$db_name&&!in_array($tname,['experience','databases']))$wpdb->query($wpdb->prepare("DELETE FROM $t WHERE db_name=%s",$db_name));
+        $c=0; foreach($rows as $row){unset($row['id']);if($db_name&&isset($row['db_name'])&&$row['db_name']!==$db_name)continue;$wpdb->insert($t,$row);if($wpdb->insert_id)$c++;} $imported[$tname]=$c;
+    } $zip->close(); echo json_encode(['ok'=>true,'imported'=>$imported]); exit;
+}
+function tabel_export_experience_excel() {
+    global $wpdb; $emps=$wpdb->get_results("SELECT id,full_name,db_name FROM ".tabel_table('employees')." ORDER BY full_name",ARRAY_A);
+    $x=new TabelXlsx();$x->addSheet('Стаж');$x->setColWidths([4,30,20,15,40]);
+    $x->addRow([$x->c('№',2),$x->c('ФИО',2),$x->c('База',2),$x->c('Стаж',2),$x->c('Периоды',2)]);
+    $i=0; foreach($emps as $emp){$exp=tabel_calc_experience((int)$emp['id']);$i++;$ps='';
+    if(!empty($exp['periods'])){$parts=[];foreach($exp['periods'] as $p){$to=$p['is_current']?'наст.время':($p['date_to']?:'?');$parts[]=$p['date_from'].' — '.$to.($p['note']?' ('.$p['note'].')':'');}$ps=implode('; ',$parts);}
+    $x->addRow([$x->n($i,4),$x->c($emp['full_name'],5),$x->c($emp['db_name'],4),$x->c($exp['display']?:'—',4),$x->c($ps,5)]);}
+    $content=$x->build(); header('Content-Type:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition:attachment;filename="experience_'.date('Y-m-d').'.xlsx"'); header('Content-Length:'.strlen($content)); echo $content; exit;
 }

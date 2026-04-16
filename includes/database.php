@@ -18,12 +18,38 @@ function tabel_create_tables() {
         id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
         username varchar(100) NOT NULL,
         password_hash varchar(255) NOT NULL,
+        display_name varchar(255) NOT NULL DEFAULT '',
         is_superadmin tinyint(1) NOT NULL DEFAULT 0,
         is_active tinyint(1) NOT NULL DEFAULT 1,
         created_at datetime DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (id),
         UNIQUE KEY username (username)
     ) $charset;");
+
+    // Migration: add display_name if missing
+    $users_t = tabel_table('users');
+    $cols = $wpdb->get_results("SHOW COLUMNS FROM $users_t", ARRAY_A);
+    if ($cols && !in_array('display_name', array_column($cols, 'Field'))) {
+        $wpdb->query("ALTER TABLE $users_t ADD COLUMN display_name varchar(255) NOT NULL DEFAULT '' AFTER password_hash");
+    }
+    
+    // Migration: add new permission columns if missing
+    $perms_t = tabel_table('user_permissions');
+    $perm_cols = $wpdb->get_results("SHOW COLUMNS FROM $perms_t", ARRAY_A);
+    if ($perm_cols) {
+        $existing = array_column($perm_cols, 'Field');
+        $new_perm_cols = [
+            'can_access_during_maintenance' => "ALTER TABLE $perms_t ADD COLUMN can_access_during_maintenance tinyint(1) NOT NULL DEFAULT 0 AFTER can_manage_experience",
+            'can_toggle_maintenance'        => "ALTER TABLE $perms_t ADD COLUMN can_toggle_maintenance tinyint(1) NOT NULL DEFAULT 0 AFTER can_access_during_maintenance",
+            'can_send_notifications'        => "ALTER TABLE $perms_t ADD COLUMN can_send_notifications tinyint(1) NOT NULL DEFAULT 0 AFTER can_toggle_maintenance",
+            'can_manage_workflow'           => "ALTER TABLE $perms_t ADD COLUMN can_manage_workflow tinyint(1) NOT NULL DEFAULT 0 AFTER can_send_notifications",
+        ];
+        foreach ($new_perm_cols as $col => $sql) {
+            if (!in_array($col, $existing)) {
+                $wpdb->query($sql);
+            }
+        }
+    }
     
     // User permissions
     $t = tabel_table('user_permissions');
@@ -46,6 +72,10 @@ function tabel_create_tables() {
         can_export_excel tinyint(1) NOT NULL DEFAULT 1,
         can_fire_employee tinyint(1) NOT NULL DEFAULT 0,
         can_manage_experience tinyint(1) NOT NULL DEFAULT 1,
+        can_access_during_maintenance tinyint(1) NOT NULL DEFAULT 0,
+        can_toggle_maintenance tinyint(1) NOT NULL DEFAULT 0,
+        can_send_notifications tinyint(1) NOT NULL DEFAULT 0,
+        can_manage_workflow tinyint(1) NOT NULL DEFAULT 0,
         PRIMARY KEY (id),
         UNIQUE KEY user_id (user_id)
     ) $charset;");
@@ -102,6 +132,7 @@ function tabel_create_tables() {
         pedagog_experience varchar(100) DEFAULT NULL,
         actual_hours double DEFAULT NULL,
         position_id bigint(20) unsigned DEFAULT NULL,
+        note text DEFAULT NULL,
         created_at datetime DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (id),
         KEY db_name (db_name)
@@ -146,6 +177,7 @@ function tabel_create_tables() {
         month int NOT NULL,
         position varchar(500) DEFAULT NULL,
         rate double DEFAULT NULL,
+        rate_manual tinyint(1) NOT NULL DEFAULT 0,
         is_fired tinyint(1) DEFAULT 0,
         employment_internal varchar(50) DEFAULT NULL,
         employment_external varchar(50) DEFAULT NULL,
@@ -157,6 +189,13 @@ function tabel_create_tables() {
         UNIQUE KEY emp_month (db_name, employee_id, year, month),
         KEY db_name (db_name)
     ) $charset;");
+    
+    // Migration: add rate_manual if missing
+    $ms_t = tabel_table('monthly_settings');
+    $ms_cols = $wpdb->get_results("SHOW COLUMNS FROM $ms_t", ARRAY_A);
+    if ($ms_cols && !in_array('rate_manual', array_column($ms_cols, 'Field'))) {
+        $wpdb->query("ALTER TABLE $ms_t ADD COLUMN rate_manual tinyint(1) NOT NULL DEFAULT 0 AFTER rate");
+    }
     
     // Excel settings
     $t = tabel_table('excel_settings');
@@ -248,7 +287,7 @@ function tabel_create_tables() {
     ) $charset;");
 
     // Experience periods (стаж)
-    $t = $prefix . 'tabel_experience';
+    $t = tabel_table('experience');
     dbDelta("CREATE TABLE $t (
         id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
         employee_id bigint(20) unsigned NOT NULL,
@@ -259,6 +298,58 @@ function tabel_create_tables() {
         created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (id),
         KEY idx_emp (employee_id)
+    ) $charset;");
+
+    // ─── Chat: channels ───
+    $t = tabel_table('chat_channels');
+    dbDelta("CREATE TABLE $t (
+        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+        channel_type varchar(20) NOT NULL DEFAULT 'global',
+        db_name varchar(100) DEFAULT NULL,
+        name varchar(255) NOT NULL DEFAULT '',
+        created_by bigint(20) unsigned DEFAULT NULL,
+        created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_type (channel_type),
+        KEY idx_db (db_name)
+    ) $charset;");
+
+    // ─── Chat: private channel members ───
+    $t = tabel_table('chat_members');
+    dbDelta("CREATE TABLE $t (
+        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+        channel_id bigint(20) unsigned NOT NULL,
+        user_id bigint(20) unsigned NOT NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY ch_user (channel_id, user_id),
+        KEY idx_user (user_id)
+    ) $charset;");
+
+    // ─── Chat: messages ───
+    $t = tabel_table('chat_messages');
+    dbDelta("CREATE TABLE $t (
+        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+        channel_id bigint(20) unsigned NOT NULL,
+        user_id bigint(20) unsigned NOT NULL,
+        username varchar(100) NOT NULL DEFAULT '',
+        display_name varchar(255) NOT NULL DEFAULT '',
+        message text NOT NULL,
+        is_system tinyint(1) NOT NULL DEFAULT 0,
+        created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_channel (channel_id, created_at),
+        KEY idx_user (user_id)
+    ) $charset;");
+
+    // ─── Chat: read cursors (last read message per user per channel) ───
+    $t = tabel_table('chat_read');
+    dbDelta("CREATE TABLE $t (
+        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+        channel_id bigint(20) unsigned NOT NULL,
+        user_id bigint(20) unsigned NOT NULL,
+        last_read_id bigint(20) unsigned NOT NULL DEFAULT 0,
+        PRIMARY KEY (id),
+        UNIQUE KEY ch_user (channel_id, user_id)
     ) $charset;");
 }
 
@@ -290,6 +381,10 @@ function tabel_init_master_data() {
             'can_view_history' => 1, 'can_export_excel' => 1,
             'can_fire_employee' => 1,
             'can_manage_experience' => 1,
+            'can_access_during_maintenance' => 1,
+            'can_toggle_maintenance' => 1,
+            'can_send_notifications' => 1,
+            'can_manage_workflow' => 1,
         ]);
     }
 }
@@ -370,11 +465,17 @@ function tabel_active_db_type() {
 // Get current user
 function tabel_current_user() {
     global $wpdb;
-    if (!isset($_SESSION['tabel_user_id'])) return null;
+    static $cached = null;
+    static $cached_uid = null;
+    $uid = isset($_SESSION['tabel_user_id']) ? $_SESSION['tabel_user_id'] : null;
+    if (!$uid) return null;
+    if ($cached !== null && $cached_uid === $uid) return $cached;
     $t = tabel_table('users');
-    return $wpdb->get_row($wpdb->prepare(
-        "SELECT * FROM $t WHERE id = %d AND is_active = 1", $_SESSION['tabel_user_id']
+    $cached = $wpdb->get_row($wpdb->prepare(
+        "SELECT * FROM $t WHERE id = %d AND is_active = 1", $uid
     ), ARRAY_A);
+    $cached_uid = $uid;
+    return $cached;
 }
 
 // Get user permissions
@@ -448,11 +549,14 @@ function tabel_get_day_names($lang) {
 // Calculate total experience from periods
 function tabel_calc_experience($employee_id, $as_of_date = null) {
     global $wpdb;
+    static $table_exists = null;
     $t = tabel_table('experience');
     if (!$as_of_date) $as_of_date = date('Y-m-d');
     
-    // Check table exists
-    if ($wpdb->get_var("SHOW TABLES LIKE '$t'") !== $t) {
+    if ($table_exists === null) {
+        $table_exists = ($wpdb->get_var("SHOW TABLES LIKE '$t'") === $t);
+    }
+    if (!$table_exists) {
         return ['total_days' => 0, 'years' => 0, 'months' => 0, 'days' => 0, 'display' => '', 'periods' => []];
     }
     
@@ -514,48 +618,161 @@ function tabel_get_status_to_mark_from_db($db_name) {
     return tabel_status_to_mark();
 }
 
-// Get employee data for month with monthly overrides + recursion inheritance
+// Get employee data for month with monthly overrides — efficient single-query version
+// Finds the latest monthly_settings for each field up to the target month
 function tabel_get_employee_for_month($employee, $year, $month, $db_name, $depth = 0) {
     global $wpdb;
-    if ($depth > 100) return $employee;
+    
+    $t = tabel_table('monthly_settings');
+    
+    // Get ALL monthly_settings for this employee up to target month, ordered newest first
+    $rows = $wpdb->get_results($wpdb->prepare(
+        "SELECT position, rate, rate_manual, employment_internal, employment_external, 
+                actual_hours, pedagog_experience, position_id, full_name, year, month
+         FROM $t WHERE db_name = %s AND employee_id = %d 
+         AND (year < %d OR (year = %d AND month <= %d))
+         ORDER BY year DESC, month DESC",
+        $db_name, $employee['id'], $year, $year, $month
+    ), ARRAY_A);
+    
+    if (empty($rows)) return $employee;
     
     $emp = $employee; // array copy
     
-    $prev_month = $month - 1;
-    $prev_year = $year;
-    if ($prev_month < 1) { $prev_month = 12; $prev_year--; }
+    // Fields to inherit: take the first (most recent) non-null value
+    $fields = ['full_name', 'position', 'rate', 'actual_hours', 'pedagog_experience', 'position_id'];
+    $found = [];
+    $rate_manual_found = false;
     
-    if ($prev_year >= 2020) {
-        $emp = tabel_get_employee_for_month($employee, $prev_year, $prev_month, $db_name, $depth + 1);
+    foreach ($rows as $row) {
+        foreach ($fields as $f) {
+            if (!isset($found[$f]) && $row[$f] !== null) {
+                $found[$f] = true;
+                if ($f === 'rate') {
+                    $emp['rate'] = (float)$row[$f];
+                    $emp['rate_manual'] = (int)$row['rate_manual'];
+                    $rate_manual_found = true;
+                } elseif ($f === 'actual_hours') {
+                    $emp['actual_hours'] = (float)$row[$f];
+                } elseif ($f === 'position_id') {
+                    $emp['position_id'] = (int)$row[$f];
+                } else {
+                    $emp[$f] = $row[$f];
+                }
+            }
+        }
+        
+        // Employment: take from most recent row that has employment set
+        if (!isset($found['_employment'])) {
+            $has_emp_set = ($row['employment_internal'] !== null || $row['employment_external'] !== null);
+            $has_other = ($row['position'] !== null || $row['rate'] !== null || 
+                          $row['actual_hours'] !== null || $row['pedagog_experience'] !== null ||
+                          $row['position_id'] !== null || $row['full_name'] !== null);
+            
+            if ($has_emp_set || !$has_other) {
+                $found['_employment'] = true;
+                $emp['employment_internal'] = $row['employment_internal'];
+                $emp['employment_external'] = $row['employment_external'];
+            }
+        }
+        
+        // Once all fields found, stop early
+        if (count($found) >= count($fields) + 1) break;
     }
     
-    $t = tabel_table('monthly_settings');
-    $monthly = $wpdb->get_row($wpdb->prepare(
-        "SELECT position, rate, employment_internal, employment_external, 
-                actual_hours, pedagog_experience, position_id, full_name
-         FROM $t WHERE db_name = %s AND employee_id = %d AND year = %d AND month = %d",
-        $db_name, $employee['id'], $year, $month
-    ), ARRAY_A);
-    
-    if ($monthly) {
-        $has_emp_set = ($monthly['employment_internal'] !== null || $monthly['employment_external'] !== null);
-        $has_other = ($monthly['position'] !== null || $monthly['rate'] !== null || 
-                      $monthly['actual_hours'] !== null || $monthly['pedagog_experience'] !== null ||
-                      $monthly['position_id'] !== null || $monthly['full_name'] !== null);
-        
-        if ($has_emp_set || !$has_other) {
-            $emp['employment_internal'] = $monthly['employment_internal'];
-            $emp['employment_external'] = $monthly['employment_external'];
-        }
-        if ($monthly['full_name'] !== null) $emp['full_name'] = $monthly['full_name'];
-        if ($monthly['position'] !== null) $emp['position'] = $monthly['position'];
-        if ($monthly['rate'] !== null) $emp['rate'] = (float)$monthly['rate'];
-        if ($monthly['actual_hours'] !== null) $emp['actual_hours'] = (float)$monthly['actual_hours'];
-        if ($monthly['pedagog_experience'] !== null) $emp['pedagog_experience'] = $monthly['pedagog_experience'];
-        if ($monthly['position_id'] !== null) $emp['position_id'] = (int)$monthly['position_id'];
+    if (!$rate_manual_found) {
+        $emp['rate_manual'] = 0;
     }
     
     return $emp;
+}
+
+// Batch version: get employee data for ALL employees in a month with ONE query
+function tabel_get_employees_for_month_batch($employees, $year, $month, $db_name) {
+    global $wpdb;
+    
+    if (empty($employees)) return [];
+    
+    $t = tabel_table('monthly_settings');
+    
+    // Get ALL monthly_settings for ALL employees up to target month
+    $emp_ids = array_map(function($e) { return (int)$e['id']; }, $employees);
+    $ids_str = implode(',', $emp_ids);
+    
+    $rows = $wpdb->get_results($wpdb->prepare(
+        "SELECT employee_id, position, rate, rate_manual, employment_internal, employment_external, 
+                actual_hours, pedagog_experience, position_id, full_name, year, month
+         FROM $t WHERE db_name = %s AND employee_id IN ($ids_str)
+         AND (year < %d OR (year = %d AND month <= %d))
+         ORDER BY employee_id, year DESC, month DESC",
+        $db_name, $year, $year, $month
+    ), ARRAY_A);
+    
+    // Group rows by employee_id
+    $grouped = [];
+    foreach ($rows as $row) {
+        $eid = (int)$row['employee_id'];
+        $grouped[$eid][] = $row;
+    }
+    
+    $result = [];
+    foreach ($employees as $employee) {
+        $eid = (int)$employee['id'];
+        $emp = $employee;
+        $emp_rows = isset($grouped[$eid]) ? $grouped[$eid] : [];
+        
+        if (empty($emp_rows)) {
+            $emp['rate_manual'] = 0;
+            $result[$eid] = $emp;
+            continue;
+        }
+        
+        $fields = ['full_name', 'position', 'rate', 'actual_hours', 'pedagog_experience', 'position_id'];
+        $found = [];
+        $rate_manual_found = false;
+        
+        foreach ($emp_rows as $row) {
+            foreach ($fields as $f) {
+                if (!isset($found[$f]) && $row[$f] !== null) {
+                    $found[$f] = true;
+                    if ($f === 'rate') {
+                        $emp['rate'] = (float)$row[$f];
+                        $emp['rate_manual'] = (int)$row['rate_manual'];
+                        $rate_manual_found = true;
+                    } elseif ($f === 'actual_hours') {
+                        $emp['actual_hours'] = (float)$row[$f];
+                    } elseif ($f === 'position_id') {
+                        $emp['position_id'] = (int)$row[$f];
+                    } else {
+                        $emp[$f] = $row[$f];
+                    }
+                }
+            }
+            
+            if (!isset($found['_employment'])) {
+                $has_emp_set = ($row['employment_internal'] !== null || $row['employment_external'] !== null);
+                $has_other = ($row['position'] !== null || $row['rate'] !== null || 
+                              $row['actual_hours'] !== null || $row['pedagog_experience'] !== null ||
+                              $row['position_id'] !== null || $row['full_name'] !== null);
+                
+                if ($has_emp_set || !$has_other) {
+                    $found['_employment'] = true;
+                    $emp['employment_internal'] = $row['employment_internal'];
+                    $emp['employment_external'] = $row['employment_external'];
+                }
+            }
+            
+            if (count($found) >= count($fields) + 1) break;
+        }
+        
+        if (!$rate_manual_found) {
+            $emp['rate_manual'] = 0;
+        }
+        
+        $result[$eid] = $emp;
+    }
+    
+    return $result;
 }
 
 // Calculate employee month totals
@@ -646,3 +863,15 @@ function tabel_calc_employee_month($employee, $entries_dict, $days_info, $db_typ
         'mark_counts' => $mark_counts,
     ];
 }
+
+// ─── Migration: add display_name to users if missing ───
+function tabel_maybe_add_display_name_column() {
+    global $wpdb;
+    $t = tabel_table('users');
+    if ($wpdb->get_var("SHOW TABLES LIKE '$t'") !== $t) return;
+    $col = $wpdb->get_var("SHOW COLUMNS FROM $t LIKE 'display_name'");
+    if (!$col) {
+        $wpdb->query("ALTER TABLE $t ADD COLUMN display_name varchar(255) NOT NULL DEFAULT '' AFTER password_hash");
+    }
+}
+add_action('init', 'tabel_maybe_add_display_name_column');

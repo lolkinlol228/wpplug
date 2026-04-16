@@ -60,6 +60,10 @@ function tabel_dispatch_api($route) {
     // /api/me
     if ($route === 'me') { tabel_api_me(); return; }
     
+    // /api/profile
+    if ($route === 'profile' && $method === 'GET') { tabel_api_get_profile(); return; }
+    if ($route === 'profile' && $method === 'POST') { tabel_api_update_profile(); return; }
+    
     // /api/switch_db
     if ($route === 'switch_db' && $method === 'POST') { tabel_api_switch_db(); return; }
     
@@ -67,6 +71,7 @@ function tabel_dispatch_api($route) {
     if ($route === 'employees' && $method === 'GET') { tabel_api_get_employees(); return; }
     if ($route === 'employees' && $method === 'POST') { tabel_api_add_employee(); return; }
     if ($route === 'employees/search') { tabel_api_search_employees(); return; }
+    if ($route === 'employees/fired' && $method === 'GET') { tabel_api_get_fired_employees(); return; }
     
     // /api/employees/<id> PUT/DELETE
     if (preg_match('/^employees\/(\d+)$/', $route, $m)) {
@@ -167,6 +172,23 @@ function tabel_dispatch_api($route) {
     if ($route === 'workflow/log' && $method === 'GET') { tabel_api_get_workflow_log(); return; }
     
     // Notifications
+    if ($route === 'import_backup' && $method === 'POST') { tabel_import_backup_zip(); return; }
+    // Внутри функции tabel_dispatch_api( $route )
+    if ($route === 'notifications/unread_count' && $_SERVER['REQUEST_METHOD'] === 'GET') {
+    global $wpdb;
+    $user = tabel_current_user();
+    if (!$user) tabel_json(['count' => 0]);
+
+    $t = tabel_table('notifications'); // Убедитесь, что таблица существует
+    $count = $wpdb->get_var($wpdb->prepare(
+        "SELECT COUNT(*) FROM $t WHERE user_id = %d AND is_read = 0",
+        $user['id']
+    ));
+
+    tabel_json(['count' => (int)$count]);
+    return;
+}
+
     if ($route === 'notifications' && $method === 'GET') { tabel_api_get_notifications(); return; }
     if ($route === 'notifications/read' && $method === 'POST') { tabel_api_mark_notifications_read(); return; }
     
@@ -175,6 +197,14 @@ function tabel_dispatch_api($route) {
     if (preg_match('/^experience\/(\d+)$/', $route, $m) && $method === 'POST') { tabel_api_save_experience_period((int)$m[1]); return; }
     if (preg_match('/^experience\/period\/(\d+)$/', $route, $m) && $method === 'DELETE') { tabel_api_delete_experience_period((int)$m[1]); return; }
     if ($route === 'experience/all' && $method === 'GET') { tabel_api_get_all_employees_experience(); return; }
+    
+    
+    // Maintenance mode (superadmin)
+    if ($route === 'maintenance' && $method === 'GET') { tabel_api_get_maintenance(); return; }
+    if ($route === 'maintenance' && $method === 'POST') { tabel_api_set_maintenance(); return; }
+    
+    // System notification (superadmin)
+    if ($route === 'system_notification' && $method === 'POST') { tabel_api_send_system_notification(); return; }
     
     tabel_json(['error' => 'not_found'], 404);
 }
@@ -208,11 +238,51 @@ function tabel_api_me() {
         'logged_in' => true,
         'user_id' => (int)$user['id'],
         'username' => $user['username'],
+        'display_name' => $user['display_name'] ?? '',
         'is_superadmin' => (bool)$user['is_superadmin'],
         'perms' => array_map('intval', $perms ?: []),
         'active_db' => $active_db,
         'accessible_dbs' => $dbs,
     ]);
+}
+
+// ─── /api/profile ───
+function tabel_api_get_profile() {
+    $user = tabel_current_user();
+    if (!$user) tabel_json(['error' => 'unauthorized'], 401);
+    tabel_json([
+        'username'     => $user['username'],
+        'display_name' => $user['display_name'] ?? '',
+    ]);
+}
+
+function tabel_api_update_profile() {
+    global $wpdb;
+    $user = tabel_current_user();
+    if (!$user) tabel_json(['error' => 'unauthorized'], 401);
+
+    $data         = tabel_input();
+    $display_name = isset($data['display_name']) ? trim(substr($data['display_name'], 0, 255)) : null;
+    $new_password = isset($data['password']) ? trim($data['password']) : '';
+
+    $ut      = tabel_table('users');
+    $updates = [];
+
+    if ($display_name !== null) {
+        $updates['display_name'] = $display_name;
+    }
+    if ($new_password !== '') {
+        if (mb_strlen($new_password) < 4) {
+            tabel_json(['ok' => false, 'error' => 'Пароль должен быть не менее 4 символов'], 400);
+        }
+        $updates['password_hash'] = tabel_hash_password($new_password);
+    }
+
+    if (!empty($updates)) {
+        $wpdb->update($ut, $updates, ['id' => (int)$user['id']]);
+    }
+
+    tabel_json(['ok' => true, 'display_name' => $display_name ?? ($user['display_name'] ?? '')]);
 }
 
 // ─── /api/switch_db ───
@@ -248,7 +318,7 @@ function tabel_api_get_employees() {
     $pos_t = tabel_table('positions');
     
     $emps = $wpdb->get_results($wpdb->prepare(
-        "SELECT * FROM $emp_t WHERE db_name = %s ORDER BY CASE WHEN rate IS NULL OR rate = 0 THEN 0 ELSE 1 END, full_name", $db_name
+        "SELECT * FROM $emp_t WHERE db_name = %s ORDER BY CASE WHEN pay_type = 'fixed' THEN 1 ELSE 0 END, full_name", $db_name
     ), ARRAY_A);
     
     $result = [];
@@ -259,7 +329,9 @@ function tabel_api_get_employees() {
                 $name_field = ($lang !== 'en') ? 'name_' . $lang : 'name_en';
                 $e['position_name'] = $pos[$name_field];
                 $e['planned_hours'] = (int)$pos['planned_hours'];
-                if ($e['actual_hours'] && $pos['planned_hours']) {
+                // Auto-calc rate only for display in employee list (base record), 
+                // monthly overrides in timesheet take precedence
+                if ($e['actual_hours'] && $pos['planned_hours'] && (!$e['rate'] || $e['rate'] == 0)) {
                     $e['rate'] = round($e['actual_hours'] / $pos['planned_hours'], 2);
                 }
             } else {
@@ -295,6 +367,7 @@ function tabel_api_add_employee() {
         'pedagog_experience' => isset($data['pedagog_experience']) ? $data['pedagog_experience'] : null,
         'actual_hours' => isset($data['actual_hours']) ? $data['actual_hours'] : null,
         'position_id' => isset($data['position_id']) ? $data['position_id'] : null,
+        'note' => isset($data['note']) ? $data['note'] : null,
     ]);
     tabel_json(['ok' => true, 'id' => $wpdb->insert_id]);
 }
@@ -316,6 +389,7 @@ function tabel_api_update_employee($eid) {
         'pedagog_experience' => isset($data['pedagog_experience']) ? $data['pedagog_experience'] : null,
         'actual_hours' => isset($data['actual_hours']) ? $data['actual_hours'] : null,
         'position_id' => isset($data['position_id']) ? $data['position_id'] : null,
+        'note' => isset($data['note']) ? $data['note'] : null,
     ], ['id' => $eid, 'db_name' => $db_name]);
     tabel_json(['ok' => true]);
 }
@@ -448,22 +522,88 @@ function tabel_api_get_timesheet($year, $month) {
     $ms_t = tabel_table('monthly_settings');
     
     $employees = $wpdb->get_results($wpdb->prepare(
-        "SELECT * FROM $emp_t WHERE db_name = %s ORDER BY CASE WHEN pay_type = 'fixed' OR rate IS NULL OR rate = 0 THEN 0 ELSE 1 END, full_name", $db_name
+        "SELECT * FROM $emp_t WHERE db_name = %s ORDER BY CASE WHEN pay_type = 'fixed' THEN 1 ELSE 0 END, full_name", $db_name
     ), ARRAY_A);
     
     $days_info = tabel_get_month_calendar($year, $month);
-    $day_names = tabel_get_day_names($lang);
+    
+    // Batch: определяем уволенных на текущий месяц.
+    // Сотрудник считается уволенным если:
+    //   - есть запись is_fired=1 с датой <= текущего месяца
+    //   - И нет записи is_fired=0 с датой >= даты увольнения (т.е. не был восстановлен)
+    $fired_ids = [];
+    if (!empty($employees)) {
+        $emp_ids = array_map(function($e) { return (int)$e['id']; }, $employees);
+        $ids_str = implode(',', $emp_ids);
+
+        // Находим всех у кого есть is_fired=1 <= текущего месяца
+        $fired_candidates = $wpdb->get_results($wpdb->prepare(
+            "SELECT employee_id, MAX(year*100+month) as fired_ym
+             FROM $ms_t WHERE db_name = %s AND is_fired = 1
+             AND employee_id IN ($ids_str)
+             AND (year < %d OR (year = %d AND month <= %d))
+             GROUP BY employee_id",
+            $db_name, $year, $year, $month
+        ), ARRAY_A);
+
+        foreach ($fired_candidates as $fc) {
+            $eid_c = (int)$fc['employee_id'];
+            $fired_ym = (int)$fc['fired_ym']; // YYYYMM когда уволен
+
+            // Проверяем: есть ли is_fired=0 запись с датой >= даты увольнения (восстановление)
+            $fired_y = intdiv($fired_ym, 100);
+            $fired_m = $fired_ym % 100;
+            $restored = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM $ms_t
+                 WHERE db_name = %s AND employee_id = %d AND is_fired = 0
+                 AND (year > %d OR (year = %d AND month >= %d))",
+                $db_name, $eid_c, $fired_y, $fired_y, $fired_m
+            ));
+
+            if (!$restored) {
+                $fired_ids[$eid_c] = true;
+            }
+        }
+    }
+    
+    // Filter out fired employees before batch loading
+    $active_employees = array_filter($employees, function($emp) use ($fired_ids) {
+        return !isset($fired_ids[(int)$emp['id']]);
+    });
+    
+    // Batch: get monthly settings for all employees at once
+    $emp_dicts = tabel_get_employees_for_month_batch($active_employees, $year, $month, $db_name);
+    
+    // Batch: get all timesheet entries for the month at once
+    $all_entries = [];
+    if (!empty($active_employees)) {
+        $active_ids = array_map(function($e) { return (int)$e['id']; }, $active_employees);
+        $active_ids_str = implode(',', $active_ids);
+        $entries_rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $te_t WHERE db_name = %s AND employee_id IN ($active_ids_str) AND year = %d AND month = %d",
+            $db_name, $year, $month
+        ), ARRAY_A);
+        foreach ($entries_rows as $e) {
+            $eid = (int)$e['employee_id'];
+            $day = (int)$e['day'];
+            $all_entries[$eid][$day] = $e;
+        }
+    }
+    
+    // Batch: check which employees have custom settings for this month
+    $has_custom_map = [];
+    if (!empty($active_employees)) {
+        $custom_rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT employee_id FROM $ms_t WHERE db_name = %s AND employee_id IN ($active_ids_str) AND year = %d AND month = %d",
+            $db_name, $year, $month
+        ), ARRAY_A);
+        foreach ($custom_rows as $cr) $has_custom_map[(int)$cr['employee_id']] = true;
+    }
     
     $result = [];
-    foreach ($employees as $emp) {
-        // Check if fired
-        $fired = $wpdb->get_var($wpdb->prepare(
-            "SELECT is_fired FROM $ms_t WHERE db_name = %s AND employee_id = %d AND year = %d AND month = %d AND is_fired = 1",
-            $db_name, $emp['id'], $year, $month
-        ));
-        if ($fired) continue;
-        
-        $emp_dict = tabel_get_employee_for_month($emp, $year, $month, $db_name);
+    foreach ($active_employees as $emp) {
+        $eid = (int)$emp['id'];
+        $emp_dict = isset($emp_dicts[$eid]) ? $emp_dicts[$eid] : $emp;
         
         // Fill missing fields from base
         foreach (['pedagog_experience', 'actual_hours', 'position_id'] as $f) {
@@ -473,26 +613,18 @@ function tabel_api_get_timesheet($year, $month) {
         }
         // Auto-calculate pedagog experience from experience periods (for PPS)
         if ($db_type === 'pps') {
-            $exp_data = tabel_calc_experience((int)$emp['id'], "$year-$month-01");
+            $exp_data = tabel_calc_experience($eid, "$year-$month-01");
             if ($exp_data['total_days'] > 0) {
                 $emp_dict['pedagog_experience'] = $exp_data['display'];
                 $emp_dict['experience_auto'] = true;
             }
         }
         $emp_dict['is_fired'] = false;
+        $emp_dict['note'] = isset($emp['note']) ? $emp['note'] : null;
+        $emp_dict['has_custom_settings'] = isset($has_custom_map[$eid]);
+        $emp_dict['rate_manual'] = isset($emp_dict['rate_manual']) ? (int)$emp_dict['rate_manual'] : 0;
         
-        $has_custom = (bool)$wpdb->get_var($wpdb->prepare(
-            "SELECT 1 FROM $ms_t WHERE db_name = %s AND employee_id = %d AND year = %d AND month = %d",
-            $db_name, $emp['id'], $year, $month
-        ));
-        $emp_dict['has_custom_settings'] = $has_custom;
-        
-        $entries = $wpdb->get_results($wpdb->prepare(
-            "SELECT * FROM $te_t WHERE db_name = %s AND employee_id = %d AND year = %d AND month = %d",
-            $db_name, $emp['id'], $year, $month
-        ), ARRAY_A);
-        $entries_dict = [];
-        foreach ($entries as $e) $entries_dict[(int)$e['day']] = $e;
+        $entries_dict = isset($all_entries[$eid]) ? $all_entries[$eid] : [];
         
         $calc = tabel_calc_employee_month($emp_dict, $entries_dict, $days_info, $db_type);
         $calc['employee'] = $emp_dict;
@@ -511,7 +643,7 @@ function tabel_api_get_timesheet($year, $month) {
     
     tabel_json([
         'employees' => $result, 'days' => $days_info,
-        'day_names' => $day_names, 'month' => $month,
+        'day_names' => tabel_get_day_names($lang), 'month' => $month,
         'year' => $year, 'db_type' => $db_type,
         'custom_marks' => $custom_marks,
         'status_to_mark' => $mark_map,
@@ -660,25 +792,35 @@ function tabel_api_update_monthly_settings() {
     $eid = $data['employee_id']; $year = $data['year']; $month = $data['month'];
     $position = isset($data['position']) ? $data['position'] : null;
     $rate = isset($data['rate']) ? $data['rate'] : null;
+    $rate_manual = isset($data['rate_manual']) ? (int)$data['rate_manual'] : null;
     
     $exists = $wpdb->get_row($wpdb->prepare(
-        "SELECT id, position, rate FROM $t WHERE db_name = %s AND employee_id = %d AND year = %d AND month = %d",
+        "SELECT id, position, rate, rate_manual FROM $t WHERE db_name = %s AND employee_id = %d AND year = %d AND month = %d",
         $db_name, $eid, $year, $month
     ), ARRAY_A);
     
     $cur_pos = $exists ? $exists['position'] : null;
     $cur_rate = $exists ? $exists['rate'] : null;
+    $cur_manual = $exists ? (int)$exists['rate_manual'] : 0;
+    
     if ($position !== null) $cur_pos = $position;
-    if ($rate !== null) $cur_rate = $rate;
+    if ($rate !== null) {
+        $cur_rate = $rate;
+    }
+    // Allow rate_manual to be set/reset independently of rate
+    if ($rate_manual !== null) {
+        $cur_manual = $rate_manual;
+    }
+    
+    $vals = ['position' => $cur_pos, 'rate' => $cur_rate, 'rate_manual' => $cur_manual];
     
     if ($exists) {
-        $wpdb->update($t, ['position' => $cur_pos, 'rate' => $cur_rate], ['id' => $exists['id']]);
+        $wpdb->update($t, $vals, ['id' => $exists['id']]);
     } else {
-        $wpdb->insert($t, [
+        $wpdb->insert($t, array_merge([
             'db_name' => $db_name, 'employee_id' => $eid,
             'year' => $year, 'month' => $month,
-            'position' => $cur_pos, 'rate' => $cur_rate,
-        ]);
+        ], $vals));
     }
     tabel_json(['ok' => true]);
 }
@@ -692,28 +834,36 @@ function tabel_api_fire_employee() {
     
     $eid = $data['employee_id']; $year = $data['year']; $month = $data['month']; $fire = $data['fire'];
     
-    if ($fire) {
+    if (!$fire) {
+        // Восстановление: сбрасываем is_fired=0 только начиная с месяца восстановления.
+        // Записи ДО даты восстановления остаются is_fired=1 — сотрудник правильно
+        // скрыт в месяцах когда он ещё числился уволенным.
+        // Также удаляем все is_fired=1 записи ПОСЛЕ даты восстановления (от повторных увольнений).
         $wpdb->query($wpdb->prepare(
-            "DELETE FROM $t WHERE db_name = %s AND employee_id = %d AND (year > %d OR (year = %d AND month >= %d))",
+            "UPDATE $t SET is_fired = 0
+             WHERE db_name = %s AND employee_id = %d AND is_fired = 1
+             AND (year > %d OR (year = %d AND month >= %d))",
             $db_name, $eid, $year, $year, $month
         ));
-        $exists = $wpdb->get_var($wpdb->prepare(
-            "SELECT id FROM $t WHERE db_name = %s AND employee_id = %d AND year = %d AND month = %d",
-            $db_name, $eid, $year, $month
-        ));
-        if ($exists) {
-            $wpdb->update($t, ['is_fired' => 1], ['id' => $exists]);
-        } else {
-            $wpdb->insert($t, [
-                'db_name' => $db_name, 'employee_id' => $eid,
-                'year' => $year, 'month' => $month, 'is_fired' => 1,
-            ]);
-        }
+        tabel_json(['ok' => true]);
+        return;
+    }
+
+    $wpdb->query($wpdb->prepare(
+        "DELETE FROM $t WHERE db_name = %s AND employee_id = %d AND (year > %d OR (year = %d AND month >= %d))",
+        $db_name, $eid, $year, $year, $month
+    ));
+    $exists = $wpdb->get_var($wpdb->prepare(
+        "SELECT id FROM $t WHERE db_name = %s AND employee_id = %d AND year = %d AND month = %d",
+        $db_name, $eid, $year, $month
+    ));
+    if ($exists) {
+        $wpdb->update($t, ['is_fired' => 1], ['id' => $exists]);
     } else {
-        $wpdb->query($wpdb->prepare(
-            "UPDATE $t SET is_fired = 0 WHERE db_name = %s AND employee_id = %d AND year = %d AND month = %d",
-            $db_name, $eid, $year, $month
-        ));
+        $wpdb->insert($t, [
+            'db_name' => $db_name, 'employee_id' => $eid,
+            'year' => $year, 'month' => $month, 'is_fired' => 1,
+        ]);
     }
     tabel_json(['ok' => true]);
 }
@@ -727,20 +877,28 @@ function tabel_api_update_emp_position() {
     
     $eid = $data['employee_id']; $year = $data['year']; $month = $data['month'];
     
-    $exists = $wpdb->get_var($wpdb->prepare(
-        "SELECT id FROM $t WHERE db_name = %s AND employee_id = %d AND year = %d AND month = %d",
+    $exists = $wpdb->get_row($wpdb->prepare(
+        "SELECT id, rate_manual FROM $t WHERE db_name = %s AND employee_id = %d AND year = %d AND month = %d",
         $db_name, $eid, $year, $month
-    ));
+    ), ARRAY_A);
     
     $vals = [
         'position' => isset($data['position']) ? $data['position'] : null,
         'position_id' => isset($data['position_id']) ? $data['position_id'] : null,
-        'rate' => isset($data['rate']) ? $data['rate'] : null,
     ];
     
+    // Only auto-set rate if NOT manually overridden
+    $is_manual = $exists && (int)$exists['rate_manual'];
+    if (isset($data['rate']) && !$is_manual) {
+        $vals['rate'] = $data['rate'];
+    }
+    
     if ($exists) {
-        $wpdb->update($t, $vals, ['id' => $exists]);
+        $wpdb->update($t, $vals, ['id' => $exists['id']]);
     } else {
+        if (isset($data['rate'])) {
+            $vals['rate'] = $data['rate'];
+        }
         $wpdb->insert($t, array_merge([
             'db_name' => $db_name, 'employee_id' => $eid,
             'year' => $year, 'month' => $month,
@@ -788,9 +946,36 @@ function tabel_api_update_emp_field() {
     $eid = $data['employee_id']; $year = $data['year']; $month = $data['month'];
     
     $updates = [];
-    if (array_key_exists('actual_hours', $data)) $updates['actual_hours'] = $data['actual_hours'];
-    if (array_key_exists('pedagog_experience', $data)) $updates['pedagog_experience'] = $data['pedagog_experience'];
-    if (array_key_exists('rate', $data)) $updates['rate'] = $data['rate'];
+    $is_manual_rate_edit = false;
+    
+    if (array_key_exists('actual_hours', $data)) {
+        $updates['actual_hours'] = $data['actual_hours'];
+        // When actual_hours change, only auto-calc rate if rate is NOT manually set
+        if (array_key_exists('rate', $data) && !array_key_exists('rate_manual_override', $data)) {
+            // Check if rate is currently manual
+            $existing = $wpdb->get_row($wpdb->prepare(
+                "SELECT rate_manual FROM $t WHERE db_name = %s AND employee_id = %d AND year = %d AND month = %d",
+                $db_name, $eid, $year, $month
+            ), ARRAY_A);
+            $is_currently_manual = $existing && (int)$existing['rate_manual'];
+            
+            if (!$is_currently_manual) {
+                $updates['rate'] = $data['rate'];
+            }
+            // If rate is manual, we skip auto-calc from actual_hours
+        }
+    }
+    
+    if (array_key_exists('pedagog_experience', $data)) {
+        $updates['pedagog_experience'] = $data['pedagog_experience'];
+    }
+    
+    // Direct rate edit by user — mark as manual
+    if (array_key_exists('rate', $data) && !array_key_exists('actual_hours', $data)) {
+        $updates['rate'] = $data['rate'];
+        $updates['rate_manual'] = 1;
+        $is_manual_rate_edit = true;
+    }
     
     if (!empty($updates)) {
         $exists = $wpdb->get_var($wpdb->prepare(
@@ -867,7 +1052,9 @@ function tabel_api_get_users() {
                 p.can_edit_fio, p.can_edit_position_col, p.can_edit_conditions,
                 p.can_edit_experience, p.can_edit_hours, p.can_edit_rate, p.can_edit_days,
                 p.can_manage_databases, p.can_view_stats, p.can_view_history,
-                p.can_export_excel, p.can_fire_employee, p.can_manage_experience
+                p.can_export_excel, p.can_fire_employee, p.can_manage_experience,
+                p.can_access_during_maintenance, p.can_toggle_maintenance,
+                p.can_send_notifications, p.can_manage_workflow
          FROM $ut u LEFT JOIN $pt p ON p.user_id = u.id ORDER BY u.id",
         ARRAY_A
     );
@@ -875,10 +1062,13 @@ function tabel_api_get_users() {
         'can_edit_excel','can_edit_fio','can_edit_position_col','can_edit_conditions',
         'can_edit_experience','can_edit_hours','can_edit_rate','can_edit_days',
         'can_manage_databases','can_view_stats','can_view_history',
-        'can_export_excel','can_fire_employee','can_manage_experience'];
+        'can_export_excel','can_fire_employee','can_manage_experience',
+        'can_access_during_maintenance','can_toggle_maintenance',
+        'can_send_notifications','can_manage_workflow'];
     foreach ($rows as &$r) {
         unset($r['password_hash']);
         $r['id'] = (int)$r['id'];
+        $r['display_name'] = $r['display_name'] ?? '';
         foreach ($bool_fields as $bf) {
             if (isset($r[$bf])) $r[$bf] = (int)$r[$bf];
         }
@@ -932,6 +1122,10 @@ function tabel_api_create_user() {
         'can_export_excel' => (int)(!empty($perms['can_export_excel'])),
         'can_fire_employee' => (int)(!empty($perms['can_fire_employee'])),
         'can_manage_experience' => (int)(!empty($perms['can_manage_experience'])),
+        'can_access_during_maintenance' => (int)(!empty($perms['can_access_during_maintenance'])),
+        'can_toggle_maintenance' => (int)(!empty($perms['can_toggle_maintenance'])),
+        'can_send_notifications' => (int)(!empty($perms['can_send_notifications'])),
+        'can_manage_workflow' => (int)(!empty($perms['can_manage_workflow'])),
     ]);
     
     tabel_json(['ok' => true, 'id' => $uid]);
@@ -982,6 +1176,10 @@ function tabel_api_update_user($uid) {
             'can_export_excel' => (int)(!empty($p['can_export_excel'])),
             'can_fire_employee' => (int)(!empty($p['can_fire_employee'])),
             'can_manage_experience' => (int)(!empty($p['can_manage_experience'])),
+            'can_access_during_maintenance' => (int)(!empty($p['can_access_during_maintenance'])),
+            'can_toggle_maintenance' => (int)(!empty($p['can_toggle_maintenance'])),
+            'can_send_notifications' => (int)(!empty($p['can_send_notifications'])),
+            'can_manage_workflow' => (int)(!empty($p['can_manage_workflow'])),
         ], ['user_id' => $uid]);
     }
     tabel_json(['ok' => true]);
@@ -1116,27 +1314,71 @@ function tabel_api_get_stats($year, $month) {
         $ms_t = tabel_table('monthly_settings');
         
         $employees = $wpdb->get_results($wpdb->prepare(
-            "SELECT * FROM $emp_t WHERE db_name = %s ORDER BY CASE WHEN rate IS NULL OR rate = 0 THEN 0 ELSE 1 END, full_name", $db_name
+            "SELECT * FROM $emp_t WHERE db_name = %s ORDER BY CASE WHEN pay_type = 'fixed' THEN 1 ELSE 0 END, full_name", $db_name
         ), ARRAY_A);
         $days_info = tabel_get_month_calendar($y, $m);
         $working_day_count = 0;
         foreach ($days_info as $d) { if (!$d['is_sunday']) $working_day_count++; }
         
+        if (empty($employees)) {
+            return [
+                'employees' => [], 'employee_count' => 0,
+                'total_pay' => 0, 'total_worked_days' => 0,
+                'avg_worked_days' => 0, 'working_days_in_month' => $working_day_count,
+                'top_absent' => [], 'year' => $y, 'month' => $m,
+            ];
+        }
+        
+        // Batch: fired check (учитываем восстановление)
+        $emp_ids = array_map(function($e) { return (int)$e['id']; }, $employees);
+        $ids_str = implode(',', $emp_ids);
+        $fired_ids = [];
+        $fired_candidates = $wpdb->get_results($wpdb->prepare(
+            "SELECT employee_id, MAX(year*100+month) as fired_ym
+             FROM $ms_t WHERE db_name = %s AND is_fired = 1
+             AND employee_id IN ($ids_str)
+             AND (year < %d OR (year = %d AND month <= %d))
+             GROUP BY employee_id",
+            $db_name, $y, $y, $m
+        ), ARRAY_A);
+        foreach ($fired_candidates as $fc) {
+            $eid_c = (int)$fc['employee_id'];
+            $fired_y = intdiv((int)$fc['fired_ym'], 100);
+            $fired_m = (int)$fc['fired_ym'] % 100;
+            $restored = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM $ms_t WHERE db_name = %s AND employee_id = %d AND is_fired = 0
+                 AND (year > %d OR (year = %d AND month >= %d))",
+                $db_name, $eid_c, $fired_y, $fired_y, $fired_m
+            ));
+            if (!$restored) $fired_ids[$eid_c] = true;
+        }
+        
+        $active = array_filter($employees, function($e) use ($fired_ids) { return !isset($fired_ids[(int)$e['id']]); });
+        
+        // Batch: monthly settings
+        $emp_dicts = tabel_get_employees_for_month_batch($active, $y, $m, $db_name);
+        
+        // Batch: all entries
+        $active_ids = array_map(function($e) { return (int)$e['id']; }, $active);
+        $active_ids_str = implode(',', $active_ids);
+        $all_entries = [];
+        if (!empty($active_ids)) {
+            $entries_rows = $wpdb->get_results($wpdb->prepare(
+                "SELECT * FROM $te_t WHERE db_name = %s AND employee_id IN ($active_ids_str) AND year = %d AND month = %d",
+                $db_name, $y, $m
+            ), ARRAY_A);
+            foreach ($entries_rows as $e) {
+                $eid = (int)$e['employee_id'];
+                $all_entries[$eid][(int)$e['day']] = $e;
+            }
+        }
+        
         $stats_list = []; $total_pay = 0; $total_worked = 0; $absence_counts = [];
         
-        foreach ($employees as $emp) {
-            $fired = $wpdb->get_var($wpdb->prepare(
-                "SELECT is_fired FROM $ms_t WHERE db_name = %s AND employee_id = %d AND year = %d AND month = %d AND is_fired = 1",
-                $db_name, $emp['id'], $y, $m
-            ));
-            if ($fired) continue;
-            
-            $emp_dict = tabel_get_employee_for_month($emp, $y, $m, $db_name);
-            $entries = $wpdb->get_results($wpdb->prepare(
-                "SELECT * FROM $te_t WHERE db_name = %s AND employee_id = %d AND year = %d AND month = %d",
-                $db_name, $emp['id'], $y, $m
-            ), ARRAY_A);
-            $ed = []; foreach ($entries as $e) $ed[(int)$e['day']] = $e;
+        foreach ($active as $emp) {
+            $eid = (int)$emp['id'];
+            $emp_dict = isset($emp_dicts[$eid]) ? $emp_dicts[$eid] : $emp;
+            $ed = isset($all_entries[$eid]) ? $all_entries[$eid] : [];
             $calc = tabel_calc_employee_month($emp_dict, $ed, $days_info, $db_type);
             
             $abs = 0;
@@ -1357,14 +1599,15 @@ function tabel_api_get_chains() {
 function tabel_api_save_chains() {
     global $wpdb;
     $caller = tabel_current_user();
-    if (!$caller || empty($caller['is_superadmin'])) tabel_json(['error' => 'forbidden'], 403);
+    $perms  = tabel_user_perms();
+    if (!$caller || (empty($caller['is_superadmin']) && empty($perms['can_manage_workflow']))) {
+        tabel_json(['error' => 'forbidden'], 403);
+    }
     $db_name = tabel_require_db();
     $data = tabel_input();
     $steps = isset($data['steps']) ? $data['steps'] : [];
-
     $t = tabel_table('workflow_chains');
     $wpdb->query($wpdb->prepare("DELETE FROM $t WHERE db_name = %s", $db_name));
-
     foreach ($steps as $i => $step) {
         $user_ids = isset($step['user_ids']) ? $step['user_ids'] : [];
         $wpdb->insert($t, [
@@ -1481,29 +1724,127 @@ function tabel_api_workflow_submit() {
     $next_step = null;
     $activated = $status ? (int)$status['activated'] : 0;
 
-    if ($current_step === -1) {
-        $activated = 1;
-        $next_step = count($chains) > 1 ? 1 : null;
-        $wpdb->insert($wl_t, [
-            'db_name' => $db_name, 'year' => $year, 'month' => $month,
-            'step_order' => 0, 'user_id' => $caller_id, 'action' => 'submit',
-            'created_at' => current_time('mysql'),
-        ]);
+    // Определяем step_order текущего действия
+    $acting_step = ($current_step === -1) ? 0 : $current_step;
+
+    // Проверяем — уже ли этот пользователь отправлял на данном шаге.
+    // Важно: если после предыдущей отправки был возврат (return) на этот шаг,
+    // пользователю разрешается отправить снова (его старый submit устарел).
+    $last_return_at = $wpdb->get_var($wpdb->prepare(
+        "SELECT MAX(created_at) FROM $wl_t WHERE db_name = %s AND year = %d AND month = %d
+         AND action = 'return' AND target_step = %d",
+        $db_name, $year, $month, $acting_step
+    ));
+    if ($last_return_at) {
+        $already = (int)$wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM $wl_t WHERE db_name = %s AND year = %d AND month = %d
+             AND step_order = %d AND user_id = %d AND action = 'submit' AND created_at > %s",
+            $db_name, $year, $month, $acting_step, $caller_id, $last_return_at
+        ));
     } else {
-        $next_step = $current_step + 1;
-        if ($next_step >= count($chains)) $next_step = null;
-        $wpdb->insert($wl_t, [
-            'db_name' => $db_name, 'year' => $year, 'month' => $month,
-            'step_order' => $current_step, 'user_id' => $caller_id, 'action' => 'submit',
-            'created_at' => current_time('mysql'),
-        ]);
+        $already = (int)$wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM $wl_t WHERE db_name = %s AND year = %d AND month = %d
+             AND step_order = %d AND user_id = %d AND action = 'submit'",
+            $db_name, $year, $month, $acting_step, $caller_id
+        ));
+    }
+    if ($already > 0) {
+        tabel_json(['error' => 'already_submitted', 'message' => 'Вы уже отправили этот шаг'], 400);
     }
 
-    $return_to = isset($data['return_to_step']) ? (int)$data['return_to_step'] : null;
-    if ($return_to !== null && $return_to < count($chains)) $next_step = $return_to;
+    // Логируем отправку текущего пользователя
+    $wpdb->insert($wl_t, [
+        'db_name'    => $db_name, 'year' => $year, 'month' => $month,
+        'step_order' => $acting_step, 'user_id' => $caller_id, 'action' => 'submit',
+        'created_at' => current_time('mysql'),
+    ]);
 
-    $new_status = ($next_step === null) ? 'completed' : 'in_progress';
-    $new_current = ($next_step === null) ? $current_step : $next_step;
+    if ($current_step === -1) {
+        $activated = 1;
+    }
+
+    // Узнаём всех пользователей текущего шага
+    $step_uids = [];
+    foreach ($chains as $c) {
+        if ((int)$c['step_order'] === $acting_step) {
+            $step_uids = json_decode($c['user_ids'], true) ?: [];
+            break;
+        }
+    }
+
+    // Считаем сколько уникальных пользователей уже отправили на этом шаге
+    // (только записи ПОСЛЕ последнего возврата на этот шаг, если он был)
+    if ($last_return_at) {
+        $submitted_uids = $wpdb->get_col($wpdb->prepare(
+            "SELECT DISTINCT user_id FROM $wl_t WHERE db_name = %s AND year = %d AND month = %d
+             AND step_order = %d AND action = 'submit' AND created_at > %s",
+            $db_name, $year, $month, $acting_step, $last_return_at
+        ));
+    } else {
+        $submitted_uids = $wpdb->get_col($wpdb->prepare(
+            "SELECT DISTINCT user_id FROM $wl_t WHERE db_name = %s AND year = %d AND month = %d
+             AND step_order = %d AND action = 'submit'",
+            $db_name, $year, $month, $acting_step
+        ));
+    }
+    $submitted_uids = array_map('intval', $submitted_uids);
+
+    // Проверяем — все ли пользователи шага подтвердили
+    $all_confirmed = true;
+    foreach ($step_uids as $uid) {
+        if (!in_array((int)$uid, $submitted_uids)) {
+            $all_confirmed = false;
+            break;
+        }
+    }
+
+    if (!$all_confirmed) {
+        // Ещё не все подтвердили — ждём остальных
+        $waiting_names = [];
+        $users_t = tabel_table('users');
+        foreach ($step_uids as $uid) {
+            if (!in_array((int)$uid, $submitted_uids)) {
+                $uname = $wpdb->get_var($wpdb->prepare("SELECT username FROM $users_t WHERE id = %d", $uid));
+                if ($uname) $waiting_names[] = $uname;
+            }
+        }
+
+        if ($status) {
+            $wpdb->update($ws_t, [
+                'activated'  => $activated,
+                'status'     => 'in_progress',
+                'updated_at' => current_time('mysql'),
+            ], ['id' => $status['id']]);
+        } else {
+            $wpdb->insert($ws_t, [
+                'db_name' => $db_name, 'year' => $year, 'month' => $month,
+                'current_step' => $acting_step, 'status' => 'in_progress',
+                'activated' => $activated, 'updated_at' => current_time('mysql'),
+            ]);
+        }
+
+        tabel_json([
+            'ok'            => true,
+            'waiting'       => true,
+            'waiting_users' => $waiting_names,
+            'new_step'      => $acting_step,
+            'status'        => 'in_progress',
+            'message'       => 'Ваша отправка принята. Ожидаем подтверждения от: ' . implode(', ', $waiting_names),
+        ]);
+        return;
+    }
+
+    // Все подтвердили — переходим на следующий шаг
+    $return_to = isset($data['return_to_step']) ? (int)$data['return_to_step'] : null;
+    if ($return_to !== null && $return_to < count($chains)) {
+        $next_step = $return_to;
+    } else {
+        $next_step = $acting_step + 1;
+        if ($next_step >= count($chains)) $next_step = null;
+    }
+
+    $new_status  = ($next_step === null) ? 'completed' : 'in_progress';
+    $new_current = ($next_step === null) ? $acting_step : $next_step;
 
     if ($status) {
         $wpdb->update($ws_t, [
@@ -1521,7 +1862,6 @@ function tabel_api_workflow_submit() {
     $mn = tabel_get_month_name_ru($month);
     if ($next_step !== null && isset($chains[$next_step])) {
         $next_uids = json_decode($chains[$next_step]['user_ids'], true) ?: [];
-        $sn = $chains[$next_step]['step_name'];
         foreach ($next_uids as $uid) {
             tabel_send_notification($uid, $db_name, $year, $month,
                 "📋 Табель за $mn $year передан вам. Теперь вы можете редактировать его и отправить дальше."
@@ -1529,7 +1869,7 @@ function tabel_api_workflow_submit() {
         }
     }
 
-    tabel_json(['ok' => true, 'new_step' => $new_current, 'status' => $new_status]);
+    tabel_json(['ok' => true, 'waiting' => false, 'new_step' => $new_current, 'status' => $new_status]);
 }
 
 function tabel_api_workflow_return() {
@@ -1756,6 +2096,97 @@ function tabel_api_get_all_employees_experience() {
             'db_name' => $emp['db_name'],
             'experience' => $exp,
         ];
+    }
+    tabel_json($result);
+}
+// ═══════════════════════════════════════════
+// MAINTENANCE MODE
+// ═══════════════════════════════════════════
+
+function tabel_api_get_maintenance() {
+    $user = tabel_current_user();
+    if (!$user) tabel_json(['error' => 'unauthorized'], 401);
+    tabel_json([
+        'enabled' => get_option('tabel_maintenance_mode', '0') === '1',
+        'message' => get_option('tabel_maintenance_message', ''),
+        'is_superadmin' => !empty($user['is_superadmin']),
+    ]);
+}
+
+function tabel_api_set_maintenance() {
+    $user = tabel_current_user();
+    if (!$user || empty($user['is_superadmin'])) tabel_json(['error' => 'forbidden'], 403);
+    $data = tabel_input();
+    update_option('tabel_maintenance_mode', !empty($data['enabled']) ? '1' : '0');
+    if (isset($data['message'])) update_option('tabel_maintenance_message', sanitize_text_field(substr($data['message'], 0, 500)));
+    tabel_json(['ok' => true, 'enabled' => !empty($data['enabled'])]);
+}
+
+// ═══════════════════════════════════════════
+// SYSTEM NOTIFICATION
+// ═══════════════════════════════════════════
+
+function tabel_api_send_system_notification() {
+    global $wpdb;
+    $user  = tabel_current_user();
+    $perms = tabel_user_perms();
+    if (!$user || (empty($user['is_superadmin']) && empty($perms['can_send_notifications']))) {
+        tabel_json(['error' => 'forbidden'], 403);
+    }
+    $data    = tabel_input();
+    $message = trim(isset($data['message']) ? $data['message'] : '');
+    $target  = isset($data['target']) ? $data['target'] : 'all';
+    if (!$message) tabel_json(['error' => 'Введите сообщение'], 400);
+    $ut   = tabel_table('users');
+    $ud_t = tabel_table('user_databases');
+    $nt   = tabel_table('notifications');
+    $user_ids = ($target === 'all')
+        ? $wpdb->get_col("SELECT id FROM $ut WHERE is_active = 1")
+        : $wpdb->get_col($wpdb->prepare("SELECT DISTINCT user_id FROM $ud_t WHERE db_name = %s", $target));
+    $count = 0;
+    foreach ($user_ids as $uid) {
+        $wpdb->insert($nt, ['user_id' => (int)$uid, 'db_name' => $target === 'all' ? '' : $target, 'year' => 0, 'month' => 0, 'message' => '📢 ' . $message, 'is_read' => 0]);
+        $count++;
+    }
+    tabel_json(['ok' => true, 'sent_to' => $count]);
+}
+function tabel_api_get_fired_employees() {
+    global $wpdb;
+    $db_name = tabel_require_db();
+    $emp_t = tabel_table('employees');
+    $ms_t = tabel_table('monthly_settings');
+    $employees = $wpdb->get_results($wpdb->prepare("SELECT * FROM $emp_t WHERE db_name = %s ORDER BY full_name", $db_name), ARRAY_A);
+    if (empty($employees)) { tabel_json([]); return; }
+    $emp_ids = array_map(function($e) { return (int)$e['id']; }, $employees);
+    $ids_str = implode(',', $emp_ids);
+
+    // Берём последнюю запись is_fired=1 по каждому сотруднику
+    $fired_rows = $wpdb->get_results($wpdb->prepare(
+        "SELECT employee_id, year, month, MAX(year*100+month) as fired_ym
+         FROM $ms_t WHERE db_name = %s AND is_fired = 1 AND employee_id IN ($ids_str)
+         GROUP BY employee_id", $db_name
+    ), ARRAY_A);
+
+    $fired_map = [];
+    foreach ($fired_rows as $fr) {
+        $eid_c = (int)$fr['employee_id'];
+        $fired_y = intdiv((int)$fr['fired_ym'], 100);
+        $fired_m = (int)$fr['fired_ym'] % 100;
+        // Проверяем: есть ли запись is_fired=0 начиная с даты увольнения (= восстановлен)
+        $restored = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM $ms_t WHERE db_name = %s AND employee_id = %d AND is_fired = 0
+             AND (year > %d OR (year = %d AND month >= %d))",
+            $db_name, $eid_c, $fired_y, $fired_y, $fired_m
+        ));
+        if (!$restored) {
+            $fired_map[$eid_c] = ['year' => (int)$fr['year'], 'month' => (int)$fr['month']];
+        }
+    }
+
+    $result = [];
+    foreach ($employees as $emp) {
+        $eid = (int)$emp['id'];
+        if (isset($fired_map[$eid])) { $emp['id']=$eid; $emp['fired_year']=$fired_map[$eid]['year']; $emp['fired_month']=$fired_map[$eid]['month']; $result[]=$emp; }
     }
     tabel_json($result);
 }
